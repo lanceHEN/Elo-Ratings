@@ -32,19 +32,28 @@ def plot_elo_ratings_over_time(team: str, elos_map: Dict[str, List[Tuple[pd.Time
     
     Args:
         team (str): The team whose Elo ratings will be plotted.
-        elos_map (Dict[str, List[Tuple[pd.Timestamp, float, int, int]]]): Mapping from each team to a 
-            non-empty, chronologically ordered list of tuples containing:
+        elos_map (Dict[str, List[Tuple[pd.Timestamp, float, int, int, int]]]): Mapping from each team to a 
+            chronologically ordered list of tuples containing:
             (1) the game id,
             (2) the date/time their Elo updated,
             (3) their Elo before that update occurred,
             (4) their Elo after that update occurred,
-            (5) 1 if they won or 0 if they lost,
+            (5) True if they won or False if they lost,
             (6) their number of wins after that update occurred,
             (7) their number of losses after that update occurred,
-            (8) the current season.
+            (8) the current season,
+            (9) True if it's the first game of that season (or ever) and False otherwise.
     """
-    dates = [get_prev_date_midnight(elos_map[team][0][1])] + [elos_map[team][i][1] for i in range(len(elos_map[team]))]
-    elos = [elos_map[team][i][2] for i in range(len(elos_map[team]))] + [elos_map[team][-1][3]]
+    dates = []
+    elos = []
+    for i in range(len(elos_map[team])):
+        if elos_map[team][i][8]: # If it's the first game of the season, we need an additional entry for before it starts
+            dates.append(get_prev_date_midnight(elos_map[team][i][1]))
+            elos.append(elos_map[team][i][2])
+        
+        # Always get date and Elo after update
+        dates.append(elos_map[team][i][1])
+        elos.append(elos_map[team][i][3])
     
     data = {'Date':dates, 'Elos':elos}
     
@@ -60,16 +69,17 @@ def plot_elos_distribution(teams: Set[str], elos_map: Dict[str, List[Tuple[pd.Ti
     """Plots the distribution of the latest elos for each team in elos_map, returning the mean and std.
     
     Args:
-        elos_map (Dict[str, List[Tuple[pd.Timestamp, float, int, int]]]): Mapping from each team to a 
-            non-empty, chronologically ordered list of tuples containing:
+        elos_map (Dict[str, List[Tuple[pd.Timestamp, float, int, int, int]]]): Mapping from each team to a 
+            chronologically ordered list of tuples containing:
             (1) the game id,
             (2) the date/time their Elo updated,
             (3) their Elo before that update occurred,
             (4) their Elo after that update occurred,
-            (5) 1 if they won or 0 if they lost,
+            (5) True if they won or False if they lost,
             (6) their number of wins after that update occurred,
             (7) their number of losses after that update occurred,
-            (8) the current season.
+            (8) the current season,
+            (9) True if it's the first game of that season (or ever) and False otherwise.
     """
 
     latest_elos = np.array([elos_map[team][-1][3] for team in teams])
@@ -81,4 +91,4 @@ def plot_elos_distribution(teams: Set[str], elos_map: Dict[str, List[Tuple[pd.Ti
     plt.title('Elo Ratings Counts')
     plt.show()
     
-    return  np.mean(latest_elos), np.std(latest_elos)
+    return np.mean(latest_elos), np.std(latest_elos)

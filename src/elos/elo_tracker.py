@@ -13,10 +13,11 @@ class EloTracker(object):
             (2) the date/time their Elo updated,
             (3) their Elo before that update occurred,
             (4) their Elo after that update occurred,
-            (5) 1 if they won or 0 if they lost,
+            (5) True if they won or False if they lost,
             (6) their number of wins after that update occurred,
             (7) their number of losses after that update occurred,
-            (8) the current season.
+            (8) the current season,
+            (9) True if it's the first game of that season (or ever) and False otherwise.
             This is the centerpoint of this class and may be referenced at any time
             to observe a team's Elo history.
         initial_elo (float): The initial Elo rating for each team. This will be used for the
@@ -75,43 +76,44 @@ class EloTracker(object):
     
         return home_elo, away_elo
             
-    def _get_initial_elo(self, team: str, season: int) -> float:
-        """Fetches an initial Elo for the team. If elos_map[team] is empty, it will produce initial_elo.
-        If the season is a new season, it will be the team's previous elo reverted to initial_elo by 1/3.
-        Otherwise, it will just be the previous Elo.
+    def _get_initial_team_stats(self, team: str, season: int) -> Tuple[float, int, int, bool]:
+        """Fetches the initial Elo, wins and losses for the team.
+        
+        If elos_map[team] is empty, it will produce initial_elo,
+        along with 0 wins and 0 losses.
+        
+        If the season is a new season, it will be the team's previous elo reverted to initial_elo by 1/3,
+        along with 0 wins and 0 losses.
+        
+        Otherwise, it will just be the previous Elo, and the last recorded wins and losses.
+        
+        Lastly, this returns true if it is the first game for the team,
+        whether ever or for the season, and False otherwise.
         
         Args:
             team (str): The team to check.
             season (int): The possibly new season to check.
+            
+        Returns:
+            Tuple[float, int, int, bool]: A tuple containing:
+                (1) The initial Elo,
+                (2) the initial wins,
+                (3) the initial losses,
+                (4) boolean flag for whether it's the first game for the team either ever or for the season.
         """
         
         if self.elos_map[team] == []:
-            return self.initial_elo
+            return self.initial_elo, 0, 0, True
 
         elif self.elos_map[team][-1][7] < season:
             old_elo = self.elos_map[team][-1][3]
             new_elo = old_elo + int((self.initial_elo - old_elo) / 3)
-            return new_elo
-        
-        else:
-            return self.elos_map[team][-1][3]
-        
-    def _get_team_record(self, team: str, season: int) -> Tuple[int, int]:
-        """Fetches the wins and losses for the team. If elos_map[team] is empty, or the season
-        is a new season, it will produce 0, 0. Otherwise, it will just be the previous wins and losses.
-        
-        Args:
-            team (str): The team to check.
-            season (int): The possibly new season to check.
-        """
-        
-        if self.elos_map[team] == [] or self.elos_map[team][-1][7] < season:
-            return 0, 0
+            return new_elo, 0, 0, True
         
         else:
             wins = self.elos_map[team][-1][5]
             losses = self.elos_map[team][-1][6]
-            return wins, losses
+            return self.elos_map[team][-1][3], wins, losses, False
     
     def add_history(self, game_df: pd.DataFrame) -> None:
         """Adds the result and updated Elo for every game in game_df to self.elos_map.
@@ -128,7 +130,7 @@ class EloTracker(object):
         Args:
             game_df (pd.DataFrame): Table whose rows are chronologically ordered game box scores,
                 including columns 'hometeam' for the home team, 'visteam' for the away team, and
-                'homewon' which is 1 if home won and 0 otherwise. Each game in game_df must take
+                'homewon' which is True if home won and False otherwise. Each game in game_df must take
                 place after the games that have already been logged for the given teams it includes.
                 Must be indexed by a game id column 'gid'.
         """
@@ -142,16 +144,12 @@ class EloTracker(object):
             
             season = game['season']
             
-            # Get initial elos
-            initial_home_elo = self._get_initial_elo(home_team, season)
-            initial_away_elo = self._get_initial_elo(away_team, season)
-            
-            # Get initial home/away wins and losses
-            home_wins, home_losses = self._get_team_record(home_team, season)
-            away_wins, away_losses = self._get_team_record(away_team, season)
+            # Get initial elos, home wins and losses, and first game flag
+            initial_home_elo, home_wins, home_losses, home_first_game = self._get_initial_team_stats(home_team, season)
+            initial_away_elo, away_wins, away_losses, away_first_game = self._get_initial_team_stats(away_team, season)
             
             # Final result
-            home_won = game['homewon']
+            home_won = int(game['homewon'])
             away_won = 1 - home_won
             
             updated_home_elo, updated_away_elo = EloTracker._elo_update(initial_home_elo, initial_away_elo, home_won, self.K)
@@ -165,8 +163,7 @@ class EloTracker(object):
             away_losses += home_won
         
             # Add to elos_map
-            h_tuple = (game_id, timestamp, initial_home_elo, updated_home_elo, home_won, home_wins, home_losses, season)
-            a_tuple = (game_id, timestamp, initial_away_elo, updated_away_elo, away_won, away_wins, away_losses, season)
+            h_tuple = (game_id, timestamp, initial_home_elo, updated_home_elo, bool(home_won), home_wins, home_losses, season, home_first_game)
+            a_tuple = (game_id, timestamp, initial_away_elo, updated_away_elo, bool(away_won), away_wins, away_losses, season, away_first_game)
             self.elos_map[home_team].append(h_tuple)
             self.elos_map[away_team].append(a_tuple)
-        
