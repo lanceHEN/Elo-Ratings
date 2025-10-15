@@ -32,7 +32,7 @@ def plot_elo_ratings_over_time(team: str, elos_map: Dict[str, List[Tuple[pd.Time
     
     Args:
         team (str): The team whose Elo ratings will be plotted.
-        elos_map (Dict[str, List[Tuple[pd.Timestamp, float, int, int, int]]]): Mapping from each team to a 
+        elos_map (Dict[str, List[Tuple[str, pd.Timestamp, float, float, bool, int, int, int, bool]]]): Mapping from each team to a 
             chronologically ordered list of tuples containing:
             (1) the game id,
             (2) the date/time their Elo updated,
@@ -43,6 +43,8 @@ def plot_elo_ratings_over_time(team: str, elos_map: Dict[str, List[Tuple[pd.Time
             (7) their number of losses after that update occurred,
             (8) the current season,
             (9) True if it's the first game of that season (or ever) and False otherwise.
+            This is the centerpoint of this class and may be referenced at any time
+            to observe a team's Elo history.
     """
     dates = []
     elos = []
@@ -69,7 +71,7 @@ def plot_elos_distribution(teams: Set[str], elos_map: Dict[str, List[Tuple[pd.Ti
     """Plots the distribution of the latest elos for each team in elos_map, returning the mean and std.
     
     Args:
-        elos_map (Dict[str, List[Tuple[pd.Timestamp, float, int, int, int]]]): Mapping from each team to a 
+        elos_map (Dict[str, List[Tuple[str, pd.Timestamp, float, float, bool, int, int, int, bool]]]): Mapping from each team to a 
             chronologically ordered list of tuples containing:
             (1) the game id,
             (2) the date/time their Elo updated,
@@ -80,6 +82,8 @@ def plot_elos_distribution(teams: Set[str], elos_map: Dict[str, List[Tuple[pd.Ti
             (7) their number of losses after that update occurred,
             (8) the current season,
             (9) True if it's the first game of that season (or ever) and False otherwise.
+            This is the centerpoint of this class and may be referenced at any time
+            to observe a team's Elo history.
     """
 
     latest_elos = np.array([elos_map[team][-1][3] for team in teams])
@@ -92,3 +96,24 @@ def plot_elos_distribution(teams: Set[str], elos_map: Dict[str, List[Tuple[pd.Ti
     plt.show()
     
     return np.mean(latest_elos), np.std(latest_elos)
+
+def basic_win_prob(home_elo: float, away_elo: float) -> float:
+    """Fetches the basic Elo probability the home team wins, given each team's Elo, along
+    with game_info, storing additional game info.
+    
+    The basic Elo probability is given by 1 / (1+10^((away_elo - home_elo) / 400).
+    
+    Args:
+        home_elo (float): Home team Elo.
+        away_elo (float): Away team Elo.
+        game_info (pd.Series): Row of a game info DataFrame storing additional information.
+        
+    Returns:
+        float: The basic probability the home team wins.
+    """
+    return 1 / (1+10**((away_elo - home_elo) / 400))
+
+def basic_win_prob_for_et(home_elo: float, away_elo: float, game_info: pd.Series) -> float:
+    """Wrapper around basic_win_prob with game_info as an additional game_info arg to be compatible
+    for use in an EloTracker object."""
+    return basic_win_prob(home_elo, away_elo)

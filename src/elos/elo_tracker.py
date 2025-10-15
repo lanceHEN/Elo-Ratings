@@ -1,13 +1,13 @@
 import pandas as pd
 from typing import Tuple, Set
-from utils.utils import get_prev_date_midnight
+from utils.utils import basic_win_prob_for_et
 
 class EloTracker(object):
     """This class provides an interface to store and add to team
     Elo ratings over time.
     
     Attributes:
-        elos_map (Dict[str, List[Tuple[pd.Timestamp, float, int, int, int]]]): Mapping from each team to a 
+        elos_map (Dict[str, List[Tuple[str, pd.Timestamp, float, float, bool, int, int, int, bool]]]): Mapping from each team to a 
             chronologically ordered list of tuples containing:
             (1) the game id,
             (2) the date/time their Elo updated,
@@ -24,9 +24,11 @@ class EloTracker(object):
             first entry in elos_map[team] once it is created, the day before the first
             game they eventually play.
         K (float): The K factor, controlling how sensitive each Elo update should be.
+        elo_prob_func (function): Function that takes in a home elo, away elo, and game information
+            (i.e. row of box scores dataframe) and produces the probability of the home team winning.
     """
     
-    def __init__(self, teams: Set[str], initial_elo: float=1500, K: float=25):
+    def __init__(self, teams: Set[str], initial_elo: float=1500, K: float=25, elo_prob_func=basic_win_prob_for_et):
         """Constructs an EloTracker from scratch with empty listings for each team.
         
         Args:
@@ -35,10 +37,13 @@ class EloTracker(object):
                 first entry in elos_map[team] once it is created, the day before the first
                 game they eventually play.
             K (float): The K factor, controlling how sensitive each Elo update should be.
+            elo_prob_func (function): Function that takes in a home elo, away elo, and game information
+                (i.e. row of box scores dataframe) and produces the probability of the home team winning.
         """
         self.elos_map = {team: [] for team in teams}
         self.initial_elo = initial_elo
         self.K = K
+        self.elo_prob_func = elo_prob_func
         
     @staticmethod
     def _prob_home_wins(home_elo: float, away_elo: float) -> float:
@@ -56,23 +61,27 @@ class EloTracker(object):
         return 1 / (1+10**((away_elo - home_elo) / 400))
     
     @staticmethod
-    def _elo_update(home_elo: float, away_elo: float, home_won: int, K: float=25) -> Tuple[float, float]:
+    def _elo_update(home_elo: float, away_elo: float, game_info: pd.Series, home_won: int,
+                    K: float=25, elo_prob_func=basic_win_prob_for_et) -> Tuple[float, float]:
         """Returns updated home and away team Elos, given a result.
     
         Args:
             home_elo (float): Initial home Elo.
             away_elo (float): Initial away Elo.
+            game_info (pd.Series): Row of a game info DataFrame storing additional information.
             home_won (int): 1 if home team won, else 0.
             K: The K factor, determining how large the update should be.
+            elo_prob_func (function): Function that takes in a home elo, away elo, and game information
+                (i.e. game_info) and produces the probability of the home team winning.
         """
-        home_win_prob = EloTracker._prob_home_wins(home_elo, away_elo)
+        home_win_prob = elo_prob_func(home_elo, away_elo, game_info)
         away_win_prob = 1 - home_win_prob
     
         away_won = 1 - home_won
     
         # Update elos
-        home_elo = home_elo + int(K*(home_won - home_win_prob))
-        away_elo = away_elo + int(K*(away_won - away_win_prob))
+        home_elo = home_elo + K*(home_won - home_win_prob)
+        away_elo = away_elo + K*(away_won - away_win_prob)
     
         return home_elo, away_elo
             
@@ -107,7 +116,7 @@ class EloTracker(object):
 
         elif self.elos_map[team][-1][7] < season:
             old_elo = self.elos_map[team][-1][3]
-            new_elo = old_elo + int((self.initial_elo - old_elo) / 3)
+            new_elo = old_elo + (self.initial_elo - old_elo) / 3
             return new_elo, 0, 0, True
         
         else:
@@ -152,7 +161,8 @@ class EloTracker(object):
             home_won = int(game['homewon'])
             away_won = 1 - home_won
             
-            updated_home_elo, updated_away_elo = EloTracker._elo_update(initial_home_elo, initial_away_elo, home_won, self.K)
+            updated_home_elo, updated_away_elo = EloTracker._elo_update(initial_home_elo, initial_away_elo,
+                                                                        game, home_won, self.K, self.elo_prob_func)
             
             # Update records
     
