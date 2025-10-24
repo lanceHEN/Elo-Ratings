@@ -4,8 +4,17 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from typing import Set, Dict, List, Tuple
 
-"""This module provides miscellaneous utility functions, whether for working with raw data
+"""This module provides miscellaneous utility constants and functions, whether for working with raw data
 or creating visualizations."""
+
+# Mapping from each team ID to their full name, including active years (duplicate full names otherwise)
+
+teams = pd.read_csv('../data/teams.csv')
+
+# Merge city and nickname into one 'fullname' column
+teams['fullname'] = teams['CITY'] + ' ' + teams['NICKNAME'] + ' (' + teams['FIRST'].astype(str) + ' - ' + teams['LAST'].astype(str) + ')'
+
+TEAM_FULLNAME_MAP = {team: full for team, full in zip(teams['TEAM'], teams['fullname'])}
 
 def get_prev_date_midnight(dt: pd.Timestamp) -> pd.Timestamp:
     """For the given timestamp, gets the timestamp for the previous day at midnight."""

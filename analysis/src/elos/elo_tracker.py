@@ -28,7 +28,7 @@ class EloTracker(object):
             (i.e. row of box scores dataframe) and produces the probability of the home team winning.
     """
     
-    def __init__(self, teams: Set[str], initial_elo: float=1500, K: float=25, elo_prob_func=basic_win_prob_for_et):
+    def __init__(self, teams: Set[str], initial_elo: float=1500, K: float=3, elo_prob_func=basic_win_prob_for_et):
         """Constructs an EloTracker from scratch with empty listings for each team.
         
         Args:
@@ -62,7 +62,7 @@ class EloTracker(object):
     
     @staticmethod
     def _elo_update(home_elo: float, away_elo: float, game_info: pd.Series, home_won: int,
-                    K: float=25, elo_prob_func=basic_win_prob_for_et) -> Tuple[float, float]:
+                    K: float=3, elo_prob_func=basic_win_prob_for_et) -> Tuple[float, float]:
         """Returns updated home and away team Elos, given a result.
     
         Args:
