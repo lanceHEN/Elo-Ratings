@@ -1,6 +1,6 @@
 import pandas as pd
 from typing import Tuple, Set
-from utils.utils import basic_win_prob_for_et
+from utils.utils import basic_win_prob_for_et, elo_update
 
 class EloTracker(object):
     """This class provides an interface to store and add to team
@@ -26,9 +26,11 @@ class EloTracker(object):
         K (float): The K factor, controlling how sensitive each Elo update should be.
         elo_prob_func (function): Function that takes in a home elo, away elo, and game information
             (i.e. row of box scores dataframe) and produces the probability of the home team winning.
+        use_margin_of_victory (bool): If True, incorporates margin of victory in the Elo update, where
+                higher margins result in larger updates. It is included as an additional variable multiplied by K.
     """
     
-    def __init__(self, teams: Set[str], initial_elo: float=1500, K: float=3, elo_prob_func=basic_win_prob_for_et):
+    def __init__(self, teams: Set[str], initial_elo: float=1500, K: float=3, elo_prob_func=basic_win_prob_for_et, use_margin_of_victory: bool = False):
         """Constructs an EloTracker from scratch with empty listings for each team.
         
         Args:
@@ -39,51 +41,14 @@ class EloTracker(object):
             K (float): The K factor, controlling how sensitive each Elo update should be.
             elo_prob_func (function): Function that takes in a home elo, away elo, and game information
                 (i.e. row of box scores dataframe) and produces the probability of the home team winning.
+            use_margin_of_victory (bool): If True, incorporates margin of victory in the Elo update, where
+                higher margins result in larger updates. It is included as an additional variable multiplied by K.
         """
         self.elos_map = {team: [] for team in teams}
         self.initial_elo = initial_elo
         self.K = K
         self.elo_prob_func = elo_prob_func
-        
-    @staticmethod
-    def _prob_home_wins(home_elo: float, away_elo: float) -> float:
-        """Fetches the probability the home team wins, given each team's Elo.
-    
-        The probability is given by 1 / (1+10^((away_elo - home_elo) / 400).
-    
-        Args:
-            home_elo (float): Home team Elo.
-            away_elo (float): Away team Elo.
-        
-        Returns:
-            float: The probability the home team wins.
-        """
-        return 1 / (1+10**((away_elo - home_elo) / 400))
-    
-    @staticmethod
-    def _elo_update(home_elo: float, away_elo: float, game_info: pd.Series, home_won: int,
-                    K: float=3, elo_prob_func=basic_win_prob_for_et) -> Tuple[float, float]:
-        """Returns updated home and away team Elos, given a result.
-    
-        Args:
-            home_elo (float): Initial home Elo.
-            away_elo (float): Initial away Elo.
-            game_info (pd.Series): Row of a game info DataFrame storing additional information.
-            home_won (int): 1 if home team won, else 0.
-            K: The K factor, determining how large the update should be.
-            elo_prob_func (function): Function that takes in a home elo, away elo, and game information
-                (i.e. game_info) and produces the probability of the home team winning.
-        """
-        home_win_prob = elo_prob_func(home_elo, away_elo, game_info)
-        away_win_prob = 1 - home_win_prob
-    
-        away_won = 1 - home_won
-    
-        # Update elos
-        home_elo = home_elo + K*(home_won - home_win_prob)
-        away_elo = away_elo + K*(away_won - away_win_prob)
-    
-        return home_elo, away_elo
+        self.use_margin_of_victory = use_margin_of_victory
             
     def _get_initial_team_stats(self, team: str, season: int) -> Tuple[float, int, int, bool]:
         """Fetches the initial Elo, wins and losses for the team.
@@ -161,8 +126,7 @@ class EloTracker(object):
             home_won = int(game['homewon'])
             away_won = 1 - home_won
             
-            updated_home_elo, updated_away_elo = EloTracker._elo_update(initial_home_elo, initial_away_elo,
-                                                                        game, home_won, self.K, self.elo_prob_func)
+            updated_home_elo, updated_away_elo = elo_update(initial_home_elo, initial_away_elo, home_won, self.K, self.elo_prob_func, game, self.use_margin_of_victory)
             
             # Update records
     

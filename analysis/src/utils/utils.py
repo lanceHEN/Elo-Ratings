@@ -126,3 +126,34 @@ def basic_win_prob_for_et(home_elo: float, away_elo: float, game_info: pd.Series
     """Wrapper around basic_win_prob with game_info as an additional game_info arg to be compatible
     for use in an EloTracker object."""
     return basic_win_prob(home_elo, away_elo)
+    
+def elo_update(home_elo: float, away_elo: float, home_won: int,
+                    K: float=3, elo_prob_func=basic_win_prob_for_et, game_info: pd.Series = None, use_margin_of_victory=False) -> Tuple[float, float]:
+    """Returns updated home and away team Elos, given a result.
+    
+    Args:
+        home_elo (float): Initial home Elo.
+        away_elo (float): Initial away Elo.
+        home_won (int): 1 if home team won, else 0.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo, away elo and optionally game information
+            (i.e. game_info) and produces the probability of the home team winning.
+        game_info (pd.Series): Row of a game info DataFrame storing additional information.
+        use_margin_of_victory (bool): If True, incorporates margin of victory in the update, where
+            higher margins result in larger updates. It is included as an additional variable multiplied by K.
+    """
+    home_win_prob = elo_prob_func(home_elo, away_elo, game_info)
+        
+    away_win_prob = 1 - home_win_prob
+    
+    away_won = 1 - home_won
+        
+    c = K
+    if use_margin_of_victory and game_info is not None:
+        c *= game_info['marginofvictory']
+    
+    # Update elos
+    home_elo = home_elo + c*(home_won - home_win_prob)
+    away_elo = away_elo + c*(away_won - away_win_prob)
+    
+    return home_elo, away_elo

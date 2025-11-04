@@ -1,100 +1,91 @@
 import numpy as np
+import pandas as pd
+from utils.utils import basic_win_prob_for_et, elo_update
+from typing import Tuple, Dict, List, Set
+import heapq
+import math
+from tqdm import tqdm
 
 """This provides functions useful to simulate an MLB season with the help of Elo ratings."""
 
-def prob_home_wins(home_elo, away_elo):
-    """Given the Elos for the home and away teams, fetches the probability the home team wins."""
-    return 1 / (1+10**((away_elo - home_elo) / 400))
-
-def simulate_game(home_elo, away_elo, K=25):
-    # given home and away elos, simulates the game and returns 1 if home won else 0, the updated home elo, and updated away elo, using the given K factor
-    home_win_prob = prob_home_wins(home_elo, away_elo)
-    away_win_prob = 1 - home_win_prob
+def simulate_game(home_elo: float, away_elo: float, K: float=3, elo_prob_func=basic_win_prob_for_et) -> Tuple[int, float, float]:
+    """Returns simulated result and the updated home and away team Elos.
+    
+    Args:
+        home_elo (float): Initial home Elo.
+        away_elo (float): Initial away Elo.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
+            and produces the probability of the home team winning.
+    """
+    home_win_prob = elo_prob_func(home_elo, away_elo, None) # No game info
     
     # Simulate result
     home_won = int(np.random.uniform() <= home_win_prob)
-        
-    away_won = 1 - home_won
     
-    # Update elos
-    home_elo = home_elo + int(K*(home_won - home_win_prob))
-    away_elo = away_elo + int(K*(away_won - away_win_prob))
+    home_elo, away_elo = elo_update(home_elo, away_elo, home_won, K, elo_prob_func)
     
     return home_won, home_elo, away_elo
 
-def sim_regular_season(initial_elos, K=25):
-    # Sims the regular season, using the initial team elos dict, producing a dict mapping each team
-    # to np.arrays storing their final elos, # wins, and # losses.
-    # Uses K-factor K for Elo update sensitivity
-    season_history = {team: np.array([initial_elos[team], 0, 0]) for team in TEAMS}
+def sim_regular_season(schedule: List[Tuple[str, str]], initial_elos: Dict[str, float], K: float=3,
+                       elo_prob_func=basic_win_prob_for_et) -> Dict[str, np.array]:
+    """Simulates the regular season with the given schedule, updating the elos in initial_elos with the given parameters.
+    
+    Args:
+        schedule (List[Tuple[str,str]]): Ordered list of (home_team, away_team) tuples representing matchups
+        initial_elos (Dict[str, float]): Mapping of each team to their initial Elo before the season starts.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info, 
+            and produces the probability of the home team winning.
+            
+    Returns:
+        Dict[str, np.array]: Mapping from each team to their final Elo and number of wins.
+    """
+    season_history = {team: np.array([initial_elos[team], 0]) for team in initial_elos.keys()}
     
     for game in schedule:
         home = game[0]
         away = game[1]
     
-        home_elo, home_wins, home_losses = season_history[home][0], season_history[home][1], season_history[home][2]
-        away_elo, away_wins, away_losses = season_history[away][0], season_history[away][1], season_history[away][2]
+        home_elo, home_wins = season_history[home][0], season_history[home][1]
+        away_elo, away_wins = season_history[away][0], season_history[away][1]
     
-        home_won, home_elo, away_elo = simulate_game(home_elo, away_elo, K)
+        home_won, home_elo, away_elo = simulate_game(home_elo, away_elo, K=K, elo_prob_func=elo_prob_func)
         away_won = 1 - home_won
     
         # Add result to history
-        season_history[home] = np.array([home_elo, home_wins + home_won, home_losses + (1 - home_won)])
-        season_history[away] = np.array([away_elo, away_wins + away_won, away_losses + (1 - away_won)])
+        season_history[home] = np.array([home_elo, home_wins + home_won])
+        season_history[away] = np.array([away_elo, away_wins + away_won])
         
     return season_history
 
-def sim_playoff_round(playoff_teams, season_history, K=25):
-    # Simulates one round of the playoffs on one side of a bracket
-    # Updates the elos in the given dictionary as the games are simulated
+def get_playoff_teams(season_history: Dict[str, np.array], american_league: Set[str], national_league: Set[str]) -> Tuple[List[str], List[str]]:
+    """Given the regular season results, finds the playoff teams for the american league and national league, ordered by seed.
     
-    next_round_teams = []
+    Args:
+        season_history (Dict[str, np.array]): Mapping from each team to their final Elo and number of wins after the regular season.
+        american_league (Set[str]): American league teams.
+        national_league (Set[str]): National league teams.
     
-    num_teams = len(playoff_teams)
-    
-    home_idx = 0 # 0-based indices for current home and away teams
-    away_idx = num_teams - 1
-    # 2 pointer method
-    for _ in range(num_teams // 2): # 3 wildcard games per bracket side
-        home = playoff_teams[home_idx]
-        away = playoff_teams[away_idx]
-            
-        home_elo = season_history[home][0]
-        away_elo = season_history[away][0]
-            
-        home_won, home_elo, away_elo = simulate_game(home_elo, away_elo, K)
-        if home_won == 1:
-            next_round_teams.append(home)
-        else:
-            next_round_teams.append(away)
-                
-        # Update elos
-        season_history[home][0] = home_elo
-        season_history[away][0] = away_elo
-            
-        home_idx += 1
-        away_idx -= 1
-            
-    return next_round_teams
-
-def get_playoff_teams(season_history):
-    # Given the regular season results, finds the playoff NFC and AFC teams
+    Returns:
+        Tuple[List[str], List[str]]: Playoff teams for the american league and national league respectively, ordered by seed.
+    """
     playoff_teams = []
     
-    for div in [NFC_CONFS, AFC_CONFS]:
+    for league in [american_league, national_league]:
         div_playoff_teams = []
         wildcard_teams = []
-        for conf in div:
-            best_conf_teams = []
-            for team in conf:
-                heapq.heappush(best_conf_teams, (-season_history[team][1], team)) # Make negative because PQ is negative, but we want to maximize
+        for div in league:
+            best_div_teams = []
+            for team in div:
+                heapq.heappush(best_div_teams, (-season_history[team][1], team)) # Make negative because PQ is negative, but we want to maximize wins
         
             # Add best team in conf to playoffs
-            heapq.heappush(div_playoff_teams, heapq.heappop(best_conf_teams))
+            heapq.heappush(div_playoff_teams, heapq.heappop(best_div_teams))
         
             # Rest are potential wildcard teams
-            for _ in best_conf_teams:
-                heapq.heappush(wildcard_teams, heapq.heappop(best_conf_teams))
+            for _ in best_div_teams:
+                heapq.heappush(wildcard_teams, heapq.heappop(best_div_teams))
             
         # Add 3 best wildcards to playoffs
         for _ in range(3):
@@ -107,57 +98,161 @@ def get_playoff_teams(season_history):
         
     return playoff_teams[0], playoff_teams[1]
 
-def sim_playoffs(nfc_playoff_teams, afc_playoff_teams, season_history, K=25):
-    # Simulates playoffs using the NFC and AFC playoff teams, where the first 4 in each list are the division winners ordered by wins, and the remaining 3 are the wilcard teams ordered by wins
-    # Returns a tuple containing a 2d list of teams that made the divisoinal, 2d list of the teams that made the conference championships, 1d list of the superbowl teams, and the superbowl winner
-    # Updates elos in season_history after simulating each game
+def sim_playoff_round(playoff_teams: List[str], num_games: int, elos_map: Dict[str, float], K: float=3, elo_prob_func=basic_win_prob_for_et) -> List[str]:
+    """Simulates one round of the playoffs on one side of a bracket, updating the elos in elos_map.
     
-    seeds = {team:idx+1 for idx, team in enumerate(nfc_playoff_teams)}
-    seeds.update({team:idx+1 for idx, team in enumerate(afc_playoff_teams)})
+    Args:
+        playoff_teams (List[str]): List of teams in the playoff ordered by their place in the bracket (first plays second, third plays fourth, etc).
+        num_games (int): Max number of games in each series.
+        elos_map (Dict[str, float]): Mapping of each team to current Elo rating.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
+            and produces the probability of the home team winning.
+    """
+    next_round_teams = []
+    
+    num_teams = len(playoff_teams)
+    
+    games_to_win = math.ceil(num_games / 2)
+    
+    for i in range(0, num_teams, 2): # Over each series
+        #print(i)
+        home_idx = i
+        away_idx = i + 1
+        home = playoff_teams[home_idx]
+        away = playoff_teams[away_idx]
+            
+        home_elo = elos_map[home]
+        away_elo = elos_map[away]
+        
+        # Simulate each game in series
+        home_wins = 0
+        away_wins = 0
+        
+        while home_wins < games_to_win and away_wins < games_to_win: # Over each game
+            home_won, home_elo, away_elo = simulate_game(home_elo, away_elo, K=K, elo_prob_func=elo_prob_func)
+                
+            # Update elos
+            elos_map[home] = home_elo
+            elos_map[away] = away_elo
+            
+            # Update wins
+            home_wins += home_won
+            away_wins += 1 - home_won
+            
+        if home_wins == games_to_win:
+            next_round_teams.append(home)
+        else:
+            next_round_teams.append(away)
+            
+    return next_round_teams
+
+def sim_playoffs(al_playoff_teams: List[str], nl_playoff_teams: List[str], elos_map: Dict[str, float], K: float=3, elo_prob_func=basic_win_prob_for_et):
+    """Simulates playoffs using the AL and NL teams, where the first 2 in each list are the 1 and 2 seed with byes and the other 4 are WC teams.
+    
+    Returns a tuple containing a 2d list of teams that made the divisional, 2d list of the teams that made the league championships,
+    1d list of the WS teams, and the WS winner.
+    
+    Args:
+        al_playoff_teams (List[str]): AL playoff teams ordered by seed.
+        nl_playoff_teams (List[str]): NL playoff teams ordered by seed.
+        elos_map (Dict[str, float]): Mapping of each team to current Elo rating.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info, 
+            and produces the probability of the home team winning.
+    """
+    
+    elos_map = elos_map.copy()
+    
+    # Reorder for wildcard - [2, 3, 6, 1, 4, 5]
+    # Current index - 0,1,2,3,4,5 -> new index
+    wc_order = [1, 2, 5, 0, 3, 4]
+    
+    #print(al_playoff_teams)
+    
+    al_playoff_teams = [al_playoff_teams[wc_order[i]] for i in range(len(al_playoff_teams))]
+    nl_playoff_teams = [nl_playoff_teams[wc_order[i]] for i in range(len(nl_playoff_teams))]
+    
+    #print(al_playoff_teams)
+    #print(nl_playoff_teams)
+    
+    al_wc_teams = al_playoff_teams[1:3] + al_playoff_teams[4:]
+    nl_wc_teams = nl_playoff_teams[1:3] + nl_playoff_teams[4:]
+    
+    #print(al_wc_teams)
+    #print(nl_wc_teams)
     
     # Get wildcard results
-    nfc_divisional_teams = sim_playoff_round(nfc_playoff_teams, season_history, K=K)
-    afc_divisional_teams = sim_playoff_round(afc_playoff_teams, season_history, K=K)
-    # Insert 1 seeds that had byes
-    nfc_divisional_teams.insert(0, nfc_playoff_teams[0])
-    afc_divisional_teams.insert(0, afc_playoff_teams[0])
+    al_divisional_teams = sim_playoff_round(al_wc_teams, 3, elos_map, K, elo_prob_func)
+    nl_divisional_teams = sim_playoff_round(nl_wc_teams, 3, elos_map, K, elo_prob_func)
     
-    # Divisional - reorganize teams - sort by seeding
-    nfc_divisional_teams.sort(key=lambda x: seeds[x])
-    afc_divisional_teams.sort(key=lambda x: seeds[x])
+    # Insert 1 and 2 seeds that had byes
+    al_divisional_teams.insert(0, al_playoff_teams[0])
+    al_divisional_teams.insert(2, al_playoff_teams[3])
     
-    # Simulate divisional games - 1 vs worst, other 2 against each other
-    nfc_championship_teams = sim_playoff_round(nfc_divisional_teams, season_history, K=K)
-    afc_championship_teams = sim_playoff_round(afc_divisional_teams, season_history, K=K)
+    nl_divisional_teams.insert(0, nl_playoff_teams[0])
+    nl_divisional_teams.insert(2, nl_playoff_teams[3])
     
-    # Simulate NFC and AFC championships
-    nfc_sb_team = sim_playoff_round(nfc_divisional_teams, season_history, K=K)[0]
-    afc_sb_team = sim_playoff_round(afc_divisional_teams, season_history, K=K)[0]
+    #print(al_divisional_teams)
+    #print(nl_divisional_teams)
     
-    # Simulate superbowl
-    sb_winner = sim_playoff_round([nfc_sb_team, afc_sb_team], season_history, K=K)[0]
+    # Simulate divisional games - 1 vs 4/5, 2 vs 3/6
+    al_championship_teams = sim_playoff_round(al_divisional_teams, 5, elos_map, K, elo_prob_func)
+    nl_championship_teams = sim_playoff_round(nl_divisional_teams, 5, elos_map, K, elo_prob_func)
     
-    return [nfc_divisional_teams, afc_divisional_teams], [nfc_championship_teams, afc_championship_teams], [nfc_sb_team, afc_sb_team], sb_winner
+    #print(al_championship_teams)
+    #print(nl_championship_teams)
+    
+    # Simulate al and nl championships
+    al_ws_team = sim_playoff_round(al_championship_teams, 7, elos_map, K, elo_prob_func)[0]
+    nl_ws_team = sim_playoff_round(nl_championship_teams, 7, elos_map, K, elo_prob_func)[0]
+    
+    #print(al_ws_team)
+    #print(nl_ws_team)
+    
+    # Simulate WS
+    ws_winner = sim_playoff_round([al_ws_team, nl_ws_team], 7, elos_map, K, elo_prob_func)[0]
+    
+    #print(ws_winner)
+    
+    return [al_divisional_teams, nl_divisional_teams], [al_championship_teams, nl_championship_teams], [al_ws_team, nl_ws_team], ws_winner
 
-def simulate_seasons(iterations, initial_elos, K=25):
-    # Simulates the given number of NFL seasons, recording for each team average wins and percentages for how often
-    # they make the playoffs, make the divisional, make the div championship, make the SB, and win the SB
-    team_results = {team: np.array([0,0,0,0,0,0]) for team in TEAMS} # wins, make playoffs, make divisional, make champ., make sb, win sb
+def simulate_seasons(iterations: int, schedule: List[Tuple[str, str]], american_league: Set[str], national_league: Set[str],
+                     initial_elos: Dict[str, float], K: float=3, elo_prob_func=basic_win_prob_for_et) -> Dict[str, np.array]:
+    """Simulates the given number of MLB seasons with the given schedule, recording for each team average wins and percentages for how often
+    they make the playoffs, make the divisional, make the league championship, make the WS, and win the WS.
+    
+    Args:
+        iterations (int): Number of seasons to simulate.
+        schedule (List[Tuple[str, str]]): Ordered list of (home_team, away_team) tuples representing matchups.
+        american_league (Set[str]): American league teams.
+        national_league (Set[str]): National league teams.
+        initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info, and
+            produces the probability of the home team winning.
+    """
+    
+    teams = initial_elos.keys()
+    
+    team_results = {team: np.array([0,0,0,0,0,0]) for team in teams} # wins, make playoffs, make divisional, make champ., make ws, win ws
     
     for _ in tqdm(range(iterations)):
-        season_history = sim_regular_season(initial_elos, K=25)
+        season_history = sim_regular_season(schedule, initial_elos, K, elo_prob_func)
         # Add # RS wins to team_results
-        for team in TEAMS:
+        for team in teams:
             team_results[team][0] += season_history[team][1]
             
         # Get playoff teams
-        nfc_playoff_teams, afc_playoff_teams = get_playoff_teams(season_history)
+        al_playoff_teams, nl_playoff_teams = get_playoff_teams(season_history, american_league, national_league)
         
-        for team in nfc_playoff_teams + afc_playoff_teams:
+        for team in al_playoff_teams + nl_playoff_teams:
             team_results[team][1] += 1
-            
+                
+        elos_map = {team: season_history[team][0] for team in teams}
+        
         # Get results for playoffs
-        divisional_teams, champ_teams, sb_teams, sb_winner = sim_playoffs(nfc_playoff_teams, afc_playoff_teams, season_history, K=K)
+        divisional_teams, champ_teams, ws_teams, ws_winner = sim_playoffs(al_playoff_teams, nl_playoff_teams, elos_map, K, elo_prob_func)
         
         for team in divisional_teams[0] + divisional_teams[1]:
             team_results[team][2] += 1
@@ -165,26 +260,16 @@ def simulate_seasons(iterations, initial_elos, K=25):
         for team in champ_teams[0] + champ_teams[1]:
             team_results[team][3] += 1
             
-        for team in sb_teams:
+        for team in ws_teams:
             team_results[team][4] += 1
             
-        team_results[sb_winner][5] += 1
+        team_results[ws_winner][5] += 1
         
     #print(team_results)
         
-    team_results = {team:team_results[team] / iterations for team in TEAMS} # divide by iteratoins to get average or percents
+    team_results = {team:team_results[team] / iterations for team in teams} # divide by iteratoins to get average or percents
     
     # convert percents to be between 0 and 100
-    team_results = {team:team_results[team]*np.array([1,100,100,100,100,100]) for team in TEAMS}
+    team_results = {team:team_results[team]*np.array([1,100,100,100,100,100]) for team in teams}
     
     return team_results
-
-team_results = simulate_seasons(1000, RATINGS_MAP)
-# Make DF for team forecasts
-avg_wins = [team_results[team][0] for team in TEAMS_LIST]
-playoff_pcts = [team_results[team][1] for team in TEAMS_LIST]
-div_pcts = [team_results[team][2] for team in TEAMS_LIST]
-champ_pcts = [team_results[team][3] for team in TEAMS_LIST]
-sb_pcts = [team_results[team][4] for team in TEAMS_LIST]
-sb_win_pcts = [team_results[team][5] for team in TEAMS_LIST]
-print(pd.DataFrame({'Team':TEAMS_LIST, 'Avg. Wins':avg_wins, 'Make Playoff':playoff_pcts, 'Make Divisional':div_pcts, 'Make Champ.':champ_pcts, 'Make SB':sb_pcts, 'Win SB':sb_win_pcts}).sort_values(by='Win SB', ascending=False).reset_index(drop=True))
