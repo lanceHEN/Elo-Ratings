@@ -3,9 +3,12 @@ import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
 from typing import Set, Dict, List, Tuple
+from scipy.special import expit
 
 """This module provides miscellaneous utility constants and functions, whether for working with raw data
-or creating visualizations."""
+or creating visualizations.
+
+NOTE: Any helpers using the EloTracker class cannot be in this module, to prevent circular imports."""
 
 # Mapping from each team ID to their full name, including active years (duplicate full names otherwise)
 
@@ -157,3 +160,28 @@ def elo_update(home_elo: float, away_elo: float, home_won: int,
     away_elo = away_elo + c*(away_won - away_win_prob)
     
     return home_elo, away_elo
+
+def p(X,w):
+    """Vector form Elo pdf for a tabular input."""
+    z = X @ w
+    return expit((-np.log(10) / 400) * z)
+
+
+def predict_lr(home_elo, away_elo, game, w):
+    """Predicts probability of home team winning via sigmoid function with given weight vector."""
+    elo_diff = away_elo - home_elo
+    rest_day_diff = game['visrestdays'] - game['homerestdays']
+    rest_day_diff = rest_day_diff if not np.isnan(rest_day_diff) else 0
+    
+    travel_diff = game['visdistancetraveled'] - game['homedistancetraveled']
+    travel_diff = travel_diff if not np.isnan(travel_diff) else 0
+    
+    home_adv_diff = 0 - 1
+    
+    pitcher_diff = game['vispitcherminusteamrgs'] - game['homepitcherminusteamrgs']
+    pitcher_diff = pitcher_diff if not np.isnan(pitcher_diff) else 0
+    
+    x = np.array([elo_diff, home_adv_diff, rest_day_diff, travel_diff, pitcher_diff]).reshape(-1,1)
+     
+    return p(x.T, w).item()
+
