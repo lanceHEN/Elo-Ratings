@@ -93,11 +93,14 @@ def get_playoff_teams(season_history: Dict[str, np.array], american_league: Set[
                 heapq.heappush(best_div_teams, (-season_history[team][1], team)) # Make negative because PQ is negative, but we want to maximize wins
         
             # Add best team in conf to playoffs
-            heapq.heappush(div_playoff_teams, heapq.heappop(best_div_teams)[1])
+            div_playoff_teams.append(heapq.heappop(best_div_teams))
         
             # Rest are potential wildcard teams
             for _ in best_div_teams:
                 heapq.heappush(wildcard_teams, heapq.heappop(best_div_teams))
+                
+        div_playoff_teams.sort(key=lambda x: x[0]) # Sort top 3 by negative wins (most wins will be most negative)
+        div_playoff_teams = [team for _, team in div_playoff_teams]
             
         # Add 3 best wildcards to playoffs
         for _ in range(3):
@@ -105,14 +108,16 @@ def get_playoff_teams(season_history: Dict[str, np.array], american_league: Set[
 
         playoff_teams.append(div_playoff_teams)
         
-    return playoff_teams[0], playoff_teams[1]
+    return playoff_teams[0], playoff_teams[1] # Ordered by seed
 
-def sim_playoff_round(playoff_teams: List[str], num_games: int, elos_map: Dict[str, float], K: float=3, elo_prob_func=basic_win_prob_for_et, simulate_mov: bool=False) -> List[str]:
+def sim_playoff_round(playoff_games: List[Tuple[str, str]], game_locations: List[bool], elos_map: Dict[str, float], K: float=3, elo_prob_func=basic_win_prob_for_et, simulate_mov: bool=False) -> List[str]:
     """Simulates one round of the playoffs on one side of a bracket, updating the elos in elos_map.
     
     Args:
-        playoff_teams (List[str]): List of teams in the playoff ordered by their place in the bracket (first plays second, third plays fourth, etc).
-        num_games (int): Max number of games in each series.
+        playoff_games (List[Tuple[str, str]]): List of (start_home, start_away) team tuples representing matchups
+            for the round.
+        game_locations (List[bool]): List indicating whether each game is at the start_home team's location.
+            Length should be equal to number of games in series.
         elos_map (Dict[str, float]): Mapping of each team to current Elo rating.
         K: The K factor, determining how large the update should be.
         elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
@@ -121,42 +126,74 @@ def sim_playoff_round(playoff_teams: List[str], num_games: int, elos_map: Dict[s
     """
     next_round_teams = []
     
-    num_teams = len(playoff_teams)
+    num_games = len(game_locations)
     
     games_to_win = math.ceil(num_games / 2)
     
-    for i in range(0, num_teams, 2): # Over each series
-        #print(i)
-        home_idx = i
-        away_idx = i + 1
-        home = playoff_teams[home_idx]
-        away = playoff_teams[away_idx]
+    for matchup in playoff_games:
+        start_home = matchup[0]
+        start_away = matchup[1]
             
-        home_elo = elos_map[home]
-        away_elo = elos_map[away]
-        
         # Simulate each game in series
-        home_wins = 0
-        away_wins = 0
+        start_home_wins = 0
+        start_away_wins = 0
         
-        while home_wins < games_to_win and away_wins < games_to_win: # Over each game
+        for start_home_is_home in game_locations: # Over each game
+            if start_home_is_home:
+                home_team = start_home
+                away_team = start_away
+            else:
+                home_team = start_away
+                away_team = start_home
+                
+            home_elo = elos_map[home_team]
+            away_elo = elos_map[away_team]
+        
             home_won, home_elo, away_elo = simulate_game(home_elo, away_elo, K=K, game_info=None, # Currently don't have rows for playoffs
                                                          elo_prob_func=elo_prob_func, simulate_mov=simulate_mov)
                 
             # Update elos
-            elos_map[home] = home_elo
-            elos_map[away] = away_elo
+            elos_map[home_team] = home_elo
+            elos_map[away_team] = away_elo
+            
+            start_home_won = home_won if start_home_is_home else 1 - home_won
             
             # Update wins
-            home_wins += home_won
-            away_wins += 1 - home_won
+            start_home_wins += start_home_won
+            start_away_wins += 1 - start_home_won
             
-        if home_wins == games_to_win:
-            next_round_teams.append(home)
-        else:
-            next_round_teams.append(away)
+            if start_home_wins == games_to_win:
+                next_round_teams.append(start_home)
+                break
+            elif start_away_wins == games_to_win:
+                next_round_teams.append(start_away)
+                break
             
     return next_round_teams
+
+def get_matchups(teams: List[str], seeds: Dict[str, int]) -> List[Tuple[str, str]]:
+    """Given a list of teams and their seeds, returns the playoff matchups where the team with the lower
+    seed starts home.
+    
+    Args:
+        teams (List[str]): List of playoff teams.
+        seeds (Dict[str, int]): Mapping of each team to their seed.
+        
+    Returns:
+        List[Tuple[str, str]]: List of (start_home, start_away) team tuples representing matchups for the playoff round.
+    """
+    matchups = []
+    
+    for i in range(0, len(teams), 2):
+        first = teams[i]
+        second = teams[i + 1]
+        
+        if seeds[first] <= seeds[second]:
+            matchups.append((first, second))
+        else:
+            matchups.append((second, first))
+        
+    return matchups
 
 def sim_playoffs(al_playoff_teams: List[str], nl_playoff_teams: List[str], elos_map: Dict[str, float], K: float=3, elo_prob_func=basic_win_prob_for_et, simulate_mov: bool=False):
     """Simulates playoffs using the AL and NL teams, where the first 2 in each list are the 1 and 2 seed with byes and the other 4 are WC teams.
@@ -176,9 +213,13 @@ def sim_playoffs(al_playoff_teams: List[str], nl_playoff_teams: List[str], elos_
     
     elos_map = elos_map.copy()
     
+    # Constant time seed lookup, plus we reorder the teams anyway.
+    al_seeds = {al_playoff_teams[i]: i+1 for i in range(len(al_playoff_teams))}
+    nl_seeds = {nl_playoff_teams[i]: i+1 for i in range(len(nl_playoff_teams))}
+    
     # Reorder for wildcard - [2, 3, 6, 1, 4, 5]
     # Current index - 0,1,2,3,4,5 -> new index
-    wc_order = [1, 2, 5, 0, 3, 4]
+    wc_order = [0, 3, 4, 1, 2, 5]
     
     #print(al_playoff_teams)
     
@@ -191,12 +232,13 @@ def sim_playoffs(al_playoff_teams: List[str], nl_playoff_teams: List[str], elos_
     al_wc_teams = al_playoff_teams[1:3] + al_playoff_teams[4:]
     nl_wc_teams = nl_playoff_teams[1:3] + nl_playoff_teams[4:]
     
-    #print(al_wc_teams)
-    #print(nl_wc_teams)
+    al_wc_matchups = get_matchups(al_wc_teams, al_seeds)
+    nl_wc_matchups = get_matchups(nl_wc_teams, nl_seeds)
     
     # Get wildcard results
-    al_divisional_teams = sim_playoff_round(al_wc_teams, 3, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
-    nl_divisional_teams = sim_playoff_round(nl_wc_teams, 3, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
+    wc_home_locations = [True, False, True]
+    al_divisional_teams = sim_playoff_round(al_wc_matchups, wc_home_locations, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
+    nl_divisional_teams = sim_playoff_round(nl_wc_matchups, wc_home_locations, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
     
     # Insert 1 and 2 seeds that had byes
     al_divisional_teams.insert(0, al_playoff_teams[0])
@@ -208,22 +250,32 @@ def sim_playoffs(al_playoff_teams: List[str], nl_playoff_teams: List[str], elos_
     #print(al_divisional_teams)
     #print(nl_divisional_teams)
     
+    al_divisional_matchups = get_matchups(al_divisional_teams, al_seeds)
+    nl_divisional_matchups = get_matchups(nl_divisional_teams, nl_seeds)
+    
+    div_home_locations = [True, True, False, False, True]
     # Simulate divisional games - 1 vs 4/5, 2 vs 3/6
-    al_championship_teams = sim_playoff_round(al_divisional_teams, 5, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
-    nl_championship_teams = sim_playoff_round(nl_divisional_teams, 5, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
+    al_championship_teams = sim_playoff_round(al_divisional_matchups, div_home_locations, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
+    nl_championship_teams = sim_playoff_round(nl_divisional_matchups, div_home_locations, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)
     
     #print(al_championship_teams)
     #print(nl_championship_teams)
     
+    al_championship_matchup = get_matchups(al_championship_teams, al_seeds)
+    nl_championship_matchup = get_matchups(nl_championship_teams, nl_seeds)
+    
     # Simulate al and nl championships
-    al_ws_team = sim_playoff_round(al_championship_teams, 7, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)[0]
-    nl_ws_team = sim_playoff_round(nl_championship_teams, 7, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)[0]
+    champ_ws_home_locations = [True, True, False, False, False, True, True]
+    al_ws_team = sim_playoff_round(al_championship_matchup, champ_ws_home_locations, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)[0]
+    nl_ws_team = sim_playoff_round(nl_championship_matchup, champ_ws_home_locations, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)[0]
     
     #print(al_ws_team)
     #print(nl_ws_team)
     
+    ws_matchup = get_matchups([al_ws_team, nl_ws_team], {al_ws_team:al_seeds[al_ws_team], nl_ws_team:nl_seeds[nl_ws_team]})
+    
     # Simulate WS
-    ws_winner = sim_playoff_round([al_ws_team, nl_ws_team], 7, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)[0]
+    ws_winner = sim_playoff_round(ws_matchup, champ_ws_home_locations, elos_map, K, elo_prob_func, simulate_mov=simulate_mov)[0]
     
     #print(ws_winner)
     
