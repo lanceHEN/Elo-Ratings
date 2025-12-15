@@ -27,7 +27,8 @@ def load_all_games_csv(filename: str, preprocess=False) -> pd.DataFrame:
     """Prodcuces filename as a Dataframe, doing any
     necessary operations on it such as getting the correct dtypes and setting
     the index to the game id. If preprocess=True, this will take max 3 rest days,
-    cube root of distance traveled, and square root of margin of victory."""
+    cube root of distance traveled, and square root of margin of victory, adding
+    'adjusted' before the original column names."""
     all_games = pd.read_csv(filename)
     
     # Initially string, must be made timestamp
@@ -36,15 +37,15 @@ def load_all_games_csv(filename: str, preprocess=False) -> pd.DataFrame:
     
     if preprocess:
         # Max rest days
-        all_games['visrestdays'] = all_games['visrestdays'].apply(lambda x: min(3,x))
-        all_games['homerestdays'] = all_games['homerestdays'].apply(lambda x: min(3,x))
+        all_games['adjustedvisrestdays'] = all_games['visrestdays'].apply(lambda x: min(3,x))
+        all_games['adjustedhomerestdays'] = all_games['homerestdays'].apply(lambda x: min(3,x))
 
         # Take cube root of distance traveled
-        all_games['homedistancetraveled'] = all_games['homedistancetraveled']**(1/3)
-        all_games['visdistancetraveled'] = all_games['visdistancetraveled']**(1/3)
+        all_games['adjustedhomedistancetraveled'] = all_games['homedistancetraveled']**(1/3)
+        all_games['adjustedvisdistancetraveled'] = all_games['visdistancetraveled']**(1/3)
 
         # Take square root of margin of victory
-        all_games['marginofvictory'] = np.sqrt(all_games['marginofvictory'])
+        all_games['adjustedmarginofvictory'] = np.sqrt(all_games['marginofvictory'])
         
     return all_games
 
@@ -184,10 +185,10 @@ def p(X,w):
 def predict_lr(home_elo, away_elo, game, w):
     """Predicts probability of home team winning via sigmoid function with given weight vector."""
     elo_diff = away_elo - home_elo
-    rest_day_diff = game['visrestdays'] - game['homerestdays']
+    rest_day_diff = game['adjustedvisrestdays'] - game['adjustedhomerestdays']
     rest_day_diff = rest_day_diff if not np.isnan(rest_day_diff) else 0
     
-    travel_diff = game['visdistancetraveled'] - game['homedistancetraveled']
+    travel_diff = game['adjustedvisdistancetraveled'] - game['adjustedhomedistancetraveled']
     travel_diff = travel_diff if not np.isnan(travel_diff) else 0
     
     home_adv_diff = 0 - 1

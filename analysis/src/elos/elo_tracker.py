@@ -15,11 +15,11 @@ class EloTracker(object):
         K (float): The K factor, controlling how sensitive each Elo update should be.
         elo_prob_func (function): Function that takes in a home elo, away elo, and game information
             (i.e. row of box scores dataframe) and produces the probability of the home team winning.
-        use_margin_of_victory (bool): If True, incorporates margin of victory in the Elo update, where
-                higher margins result in larger updates. It is included as an additional variable multiplied by K.
+        margin_of_victory_column (str): If given, incorporates the margin of victory column into the Elo update, where
+            higher margins result in larger updates. It is included as an additional variable multiplied by K.
     """
     
-    def __init__(self, initial_elo: float=1500, K: float=3, elo_prob_func=basic_win_prob_for_et, use_margin_of_victory: bool = False):
+    def __init__(self, initial_elo: float=1500, K: float=3, elo_prob_func=basic_win_prob_for_et, margin_of_victory_column: str=None):
         """Constructs an EloTracker from scratch with the given initial elo, probability function, and whether
         to use margin of victory.
         
@@ -28,14 +28,14 @@ class EloTracker(object):
             K (float): The K factor, controlling how sensitive each Elo update should be.
             elo_prob_func (function): Function that takes in a home elo, away elo, and game information
                 (i.e. row of box scores dataframe) and produces the probability of the home team winning.
-            use_margin_of_victory (bool): If True, incorporates margin of victory in the Elo update, where
+            margin_of_victory_column (str): If given, incorporates the margin of victory column into the Elo update, where
                 higher margins result in larger updates. It is included as an additional variable multiplied by K.
         """
         self.elos_map = {}
         self.initial_elo = initial_elo
         self.K = K
         self.elo_prob_func = elo_prob_func
-        self.use_margin_of_victory = use_margin_of_victory
+        self.margin_of_victory_column = margin_of_victory_column
             
     def _get_initial_team_stats(self, team: str, season: int) -> Tuple[float, int, int, bool]:
         """Fetches the initial Elo, wins and losses for the team.
@@ -116,7 +116,7 @@ class EloTracker(object):
             
             home_win_prob = self.elo_prob_func(initial_home_elo, initial_away_elo, game)
             
-            mov = game['marginofvictory'] if self.use_margin_of_victory else None
+            mov = game[self.margin_of_victory_column] if self.margin_of_victory_column else None
             
             updated_home_elo, updated_away_elo = elo_update(initial_home_elo, initial_away_elo,
                                                                            home_won, home_win_prob, self.K,

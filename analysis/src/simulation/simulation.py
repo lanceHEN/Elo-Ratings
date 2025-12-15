@@ -29,9 +29,9 @@ def simulate_game(home_elo: float, away_elo: float, game_info: pd.Series = None,
     if simulate_mov:
         winning_elo_difference = home_elo - away_elo if home_won else away_elo - home_elo
         lambda_poisson = 1.702 + .001*winning_elo_difference
-        mov = poisson.rvs(mu=lambda_poisson - 1, loc=1)
+        sqrt_mov = poisson.rvs(mu=lambda_poisson - 1, loc=1)
     
-    home_elo, away_elo = elo_update(home_elo, away_elo, home_won, home_win_prob, K, margin_of_victory=mov)
+    home_elo, away_elo = elo_update(home_elo, away_elo, home_won, home_win_prob, K, margin_of_victory=sqrt_mov)
     
     return home_won, home_elo, away_elo
 
