@@ -3,7 +3,14 @@ from scipy.special import expit
 import numpy as np
 import pandas as pd
 
-"""This module provides mathematical utility functions used throughout the analysis codebase."""
+"""This module provides mathematical utility constants and functions used throughout the analysis codebase."""
+
+# Learned in src/win_prob.py
+w = np.array([[ 1.        ],
+       [27.1440666 ],
+       [ 4.81476328],
+       [-0.30523283],
+       [ 1.58004319]])
 
 def basic_win_prob(home_elo: float, away_elo: float) -> float:
     """Fetches the basic Elo probability the home team wins, given each team's Elo, along
@@ -61,7 +68,7 @@ def p(X,w):
     return expit((-np.log(10) / 400) * z)
 
 
-def predict_lr(home_elo, away_elo, game, w):
+def predict_lr(home_elo, away_elo, game, w=w):
     """Predicts probability of home team winning via sigmoid function with given weight vector."""
     elo_diff = away_elo - home_elo
     rest_day_diff = game['adjustedvisrestdays'] - game['adjustedhomerestdays']
