@@ -200,3 +200,44 @@ def predict_lr(home_elo, away_elo, game, w):
      
     return p(x.T, w).item()
 
+def get_team_lineup_mapping_first_game(season: int) -> Dict[str, List[str]]:
+    """Given a season, returns a mapping from each team to their starting lineup
+    for the first game of the season.
+    
+    Args:
+        season (int): The season year.
+        
+    Returns:
+        Dict[str, List[str]]: Mapping from each team to their starting lineup
+        for the first game of the season. Each player is represented by their
+        retrosheet ID.
+    """
+    team_stats = pd.read_csv(f'../data/teamstats_clean.csv')
+    team_stats_season = team_stats[team_stats['season'] == season]
+    mapping = {}
+    
+    for team in teams:
+        first_game = team_stats_season[(team_stats_season['team'] == team)].iloc[0]
+        
+        lineup = [first_game[f'start_l{i}'] for i in range(1,10)]
+        mapping[team] = lineup
+        
+    return mapping
+    
+# Given a season and player names, return a player name -> transition matrix mapping
+def get_player_transition_matrices(season: int, player_names: Set[str]) -> Dict[str, np.array]:
+    """Given a season and player ids, produces a mapping from each player id to their transition matrix.
+    
+    Each transition matrix is 24x25, where each of the initial 24 is some combination of # outs and bases occupied,
+    and there is one additional column for the terminal state of 3 outs.
+    
+    Note that in this implementation, we only use the player out, reach first, reach second, reach third, and home run events
+    to have enough data for each state.
+    
+    Args:
+        season (int): The season year to get player data for.
+        player_names (Set[str]): The set of player retrosheet IDs to get transition matrices for.
+        
+    Returns:
+        Dict[str, np.array]: Mapping from each player retrosheet ID to their transition matrix.
+    """
