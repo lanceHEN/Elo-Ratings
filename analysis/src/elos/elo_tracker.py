@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from matplotlib import pyplot as plt
 from typing import Tuple, Set
-from utils.generic_utils import basic_win_prob_for_et, elo_update
+from analysis.src.utils.math_utils import basic_win_prob_for_et, elo_update
 
 class EloTracker():
     """This class provides an interface to store and add to team

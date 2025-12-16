@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from utils.generic_utils import basic_win_prob_for_et, elo_update
+from analysis.src.utils.math_utils import basic_win_prob_for_et, elo_update
 from typing import Tuple, Dict, List, Set
 import heapq
 import math
@@ -24,6 +24,8 @@ def uniform_simulation(home_win_prob: float, home_team: str, away_team: str) -> 
         int: 1 if home team wins, 0 otherwise.
     """
     return int(uniform.rvs() <= home_win_prob)
+
+#class MLBSimulator():
 
 def simulate_game(home_elo: float, away_elo: float, home_team: str, away_team: str, simulation_func=uniform_simulation, game_info: pd.Series = None, K: float=3,
                   elo_prob_func=basic_win_prob_for_et, simulate_mov: bool=False) -> Tuple[int, float, float]:

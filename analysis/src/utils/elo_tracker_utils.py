@@ -1,4 +1,4 @@
-from utils.generic_utils import basic_win_prob_for_et, get_teams
+from analysis.src.utils.math_utils import basic_win_prob_for_et
 from sklearn.metrics import log_loss, accuracy_score
 import pandas as pd
 from typing import Tuple, Set
