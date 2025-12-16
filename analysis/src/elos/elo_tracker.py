@@ -1,8 +1,10 @@
 import pandas as pd
-from typing import Tuple
+import numpy as np
+from matplotlib import pyplot as plt
+from typing import Tuple, Set
 from utils.generic_utils import basic_win_prob_for_et, elo_update
 
-class EloTracker(object):
+class EloTracker():
     """This class provides an interface to store and add to team
     Elo ratings over time.
     
@@ -155,3 +157,24 @@ class EloTracker(object):
             
         if add_win_probs_to_df:
             game_df['homewinprob'] = home_win_probs
+            
+    def plot_elos_distribution(self, teams: Set[str]) -> Tuple[float, float]:
+        """Plots the distribution of the latest elos for the given teams, returning the mean and standard deviation.
+    
+        Args:
+            teams(Set[str]): The teams to get elos for and plot.
+            
+        Returns:
+            Tuple[float, float]: The mean and standard deviation of the latest elos for each team.
+        """
+
+        latest_elos = np.array([self.elos_map[team][0] for team in teams])
+    
+        plt.grid()
+        plt.hist(latest_elos)
+        plt.xlabel('Elo Rating')
+        plt.ylabel('Count')
+        plt.title('Elo Ratings Counts')
+        plt.show()
+
+        return np.mean(latest_elos), np.std(latest_elos)

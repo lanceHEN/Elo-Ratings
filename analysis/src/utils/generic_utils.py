@@ -102,29 +102,6 @@ def plot_elo_ratings_over_time(team: str, elos_df: pd.DataFrame) -> None:
     plt.ylabel('Elo')
     plt.title(f'Elo Over Time for {team}')
     plt.show()
-    
-def plot_elos_distribution(teams: Set[str], elos_map: Dict[str, Tuple[float, int, int, int]]) -> Tuple[float, float]:
-    """Plots the distribution of the latest elos for each team in elos_map, returning the mean and std.
-    
-    Args:
-        teams(Set[str]): The teams to get elos for and plot.
-        elos_map (Dict[str, Tuple[float, int, int, int]]): Mapping from each
-            team to their latest Elo rating, wins, losses, and season played.
-            
-    Returns:
-        Tuple[float, float]: The mean and standard deviation of the latest elos for each team.
-    """
-
-    latest_elos = np.array([elos_map[team][0] for team in teams])
-    
-    plt.grid()
-    plt.hist(latest_elos)
-    plt.xlabel('Elo Rating')
-    plt.ylabel('Count')
-    plt.title('Elo Ratings Counts')
-    plt.show()
-    
-    return np.mean(latest_elos), np.std(latest_elos)
 
 def basic_win_prob(home_elo: float, away_elo: float) -> float:
     """Fetches the basic Elo probability the home team wins, given each team's Elo, along
