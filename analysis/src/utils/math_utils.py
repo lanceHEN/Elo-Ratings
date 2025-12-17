@@ -198,14 +198,16 @@ def get_player_transition_matrices(season: int, players: Set[str]) -> Dict[str, 
             # If we treat bases as a 3-bit binary number, we want to slide them left by 2 and add '10' at the end
             for bases in range(8):
                 initial_state = outs * 8 + bases # row index
-                next_state = outs * 8 + int(bin(bases << 2)[2:].zfill(3)[-3] + '10', 2)
+                next_state = outs * 8 + int(bin((bases << 2) + 2)[2:].zfill(3)[-3:], 2)
                 T[initial_state, next_state] = second_pct
                 
             # Singles advance any runners by one base
             # If we treat bases as a 3-bit binary number, we want to slide them left by 1 and add '1' at the end
             for bases in range(8):
                 initial_state = outs * 8 + bases # row index
-                next_state = outs * 8 + int(bin(bases << 1)[2:].zfill(3)[-3:-1] + '1', 2)
+                next_state = outs * 8 + int(bin((bases << 1) + 1)[2:].zfill(3)[-3:], 2)
                 T[initial_state, next_state] = first_pct
                 
         mapping[player] = T
+        
+    return mapping
