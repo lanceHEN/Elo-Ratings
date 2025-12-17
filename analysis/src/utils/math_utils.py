@@ -85,16 +85,19 @@ def predict_lr(home_elo, away_elo, game, w=w):
     x = np.array([elo_diff, home_adv_diff, rest_day_diff, travel_diff, pitcher_diff]).reshape(-1,1)
      
     return p(x.T, w).item()
-    
-# Given a season and player names, return a player name -> transition matrix mapping
-def get_player_transition_matrices(season: int, player_names: Set[str]) -> Dict[str, np.array]:
+
+def get_player_transition_matrices(season: int, players: Set[str]) -> Dict[str, np.array]:
     """Given a season and player ids, produces a mapping from each player id to their transition matrix.
     
     Each transition matrix is 24x25, where each of the initial 24 is some combination of # outs and bases occupied,
     and there is one additional column for the terminal state of 3 outs.
     
+    They are ordered first by outs (0, 1, 2) then by bases occupied (000, 001, 010, 011, 100, 101, 110, 111).
+    Note bases occupied are represented and ordered as 3-bit binary numbers, for convenience with calculating
+    transitions for singles and doubles.
+    
     Note that in this implementation, we only use the player out, reach first, reach second, reach third, and home run events
-    to have enough data for each state.
+    to have enough data for each state. We also don't have information for advancing runners currently.
     
     Args:
         season (int): The season year to get player data for.
@@ -103,3 +106,106 @@ def get_player_transition_matrices(season: int, player_names: Set[str]) -> Dict[
     Returns:
         Dict[str, np.array]: Mapping from each player retrosheet ID to their transition matrix.
     """
+    batting = pd.read_csv(f'../../data/batting_clean.csv')
+    batting = batting[batting['season'] == season]
+    
+    mapping = {}
+    
+    # Get averages in case a player has no data
+    
+    all_plate_apps = sum(batting[col].sum() for col in ['b_ab', 'b_iw', 'b_w' 'b_hbp', 'b_sf', 'b_sh', 'b_xi'])
+    
+    all_firsts = (batting['b_h'].sum() - sum(batting[col].sum() for col in ['b_d', 'b_t', 'b_hr'])) + sum(batting[col].sum() for col in ['b_iw', 'b_w', 'b_hbp', 'b_xi'])
+    
+    all_seconds = batting['b_d'].sum()
+    
+    all_thirds = batting['b_t'].sum()
+    
+    all_homers = batting['b_hr'].sum()
+    
+    all_outs = all_plate_apps - (all_firsts + all_seconds + all_thirds + all_homers) # Not correct but close enough
+    
+    all_first_pct = all_firsts / all_plate_apps
+    
+    all_second_pct = all_seconds / all_plate_apps
+    
+    all_third_pct = all_thirds / all_plate_apps
+    
+    all_homer_pct = all_homers / all_plate_apps
+    
+    all_out_pct = all_outs / all_plate_apps
+    
+    for player in players:
+        player_batting = batting[batting['batter'] == player]
+        
+        plate_apps = player_batting['b_ab'].sum() + player_batting['b_bb'].sum() + player_batting['b_hbp'].sum() + player_batting['b_sf'].sum() + player_batting['b_sh'].sum() + player_batting['b_xi'].sum()
+        
+        firsts = (player_batting['b_h'].sum() - sum(player_batting[col].sum() for col in ['b_d', 'b_t', 'b_hr'])) + sum(player_batting[col].sum() for col in ['b_iw', 'b_w', 'b_hbp', 'b_xi'])
+    
+        seconds = player_batting['b_d'].sum()
+    
+        thirds = player_batting['b_t'].sum()
+    
+        homers = player_batting['b_hr'].sum()
+    
+        outs = plate_apps - (firsts + seconds + thirds + homers) # Not correct but close enough
+    
+        first_pct = firsts / plate_apps if plate_apps > 0 else all_first_pct
+    
+        second_pct = seconds / plate_apps if plate_apps > 0 else all_second_pct
+    
+        third_pct = thirds / plate_apps if plate_apps > 0 else all_third_pct
+    
+        homer_pct = homers / plate_apps if plate_apps > 0 else all_homer_pct
+        
+        out_pct = outs / plate_apps if plate_apps > 0 else all_out_pct
+        
+        T = np.zeros((24, 25)) # Make zeros so we only have to worry about possible transitions
+        
+        terminal_state = 24
+        
+        # Start with outs - if < 2 outs, transition to same state but with 1 more out
+        # if 2 outs, transition to terminal state
+        
+        for outs in range(2): # < 2 outs
+            for bases in range(8):
+                initial_state = outs * 8 + bases # row index
+                next_state = initial_state + 8
+        
+                T[initial_state, next_state] = out_pct
+                
+        for bases in range(8): # 2 outs
+            initial_state = 2 * 8 + bases
+            T[initial_state, terminal_state] = out_pct
+            
+        # Singles, doubles, triples, homers
+        # In each of them, we assume the number of outs won't change
+        
+        for outs in range(3):
+            # Home runs always clear bases
+            for bases in range(8):
+                initial_state = outs * 8 + bases # row index
+                next_state = outs * 8 + 0
+                T[initial_state, next_state] = homer_pct
+                
+            # Triples always result in one on third
+            for bases in range(8):
+                initial_state = outs * 8 + bases # row index
+                next_state = outs * 8 + 4
+                T[initial_state, next_state] = third_pct
+                
+            # Doubles advance any runners by two bases
+            # If we treat bases as a 3-bit binary number, we want to slide them left by 2 and add '10' at the end
+            for bases in range(8):
+                initial_state = outs * 8 + bases # row index
+                next_state = outs * 8 + int(bin(bases << 2)[2:].zfill(3)[-3] + '10', 2)
+                T[initial_state, next_state] = second_pct
+                
+            # Singles advance any runners by one base
+            # If we treat bases as a 3-bit binary number, we want to slide them left by 1 and add '1' at the end
+            for bases in range(8):
+                initial_state = outs * 8 + bases # row index
+                next_state = outs * 8 + int(bin(bases << 1)[2:].zfill(3)[-3:-1] + '1', 2)
+                T[initial_state, next_state] = first_pct
+                
+        mapping[player] = T
