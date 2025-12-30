@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from utils.math_utils import basic_win_prob_for_et, elo_update
+from utils import basic_win_prob_for_et, elo_update, get_player_transition_matrices, get_runs_for_transition_matrix
 from typing import Tuple, Dict, List, Set
 import heapq
 import math
@@ -24,6 +24,22 @@ def uniform_simulation(home_win_prob: float, home_team: str, away_team: str) -> 
         int: 1 if home team wins, 0 otherwise.
     """
     return int(uniform.rvs() <= home_win_prob)
+
+def pa_simulation(home_win_prob: float, home_team: str, away_team: str) -> int:
+    """Simulates the game including each plate appearance, returning 1 if home team wins, 0 otherwise.
+    
+    It will leverage home_win_prob as an initial win probability, which will change over time through
+    each PA.
+    
+    Args:
+        home_win_prob (float): Probability of home team winning.
+        home_team (str): Name of home team (unused).
+        away_team (str): Name of away team (unused).
+        
+    Returns:
+        int: 1 if home team wins, 0 otherwise.
+    """
+    
 
 class MLBSimulator():
     
@@ -73,6 +89,11 @@ class MLBSimulator():
         self.elo_prob_func = elo_prob_func
         self.simulate_mov = simulate_mov
         self.simulation_results = None
+        
+        if simulation_func == pa_simulation:
+            season_players = set()
+            self.player_transition_matrices = get_player_transition_matrices(season_players)
+            self.R = get_runs_for_transition_matrix()
 
     def _simulate_game(self, home_elo: float, away_elo: float, home_team: str, away_team: str, game_info: pd.Series = None) -> Tuple[int, float, float]:
         """Returns simulated result and the updated home and away team Elos.

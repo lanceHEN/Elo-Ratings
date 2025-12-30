@@ -2,6 +2,9 @@ from typing import Set, Dict, List, Tuple
 from scipy.special import expit
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
+from .misc_utils import load_batting_csv
+from sklearn.metrics import log_loss, accuracy_score
 
 """This module provides mathematical utility constants and functions used throughout the analysis codebase."""
 
@@ -86,6 +89,81 @@ def predict_lr(home_elo, away_elo, game, w=w):
      
     return p(x.T, w).item()
 
+def predict_lr_use_pitchers_if_first_games(home_elo: float, away_elo: float, game: pd.Series):
+    """Uses logistic regression with pitcher rating included if it is each pitcher's first game, and
+    the game is not None.
+    
+    We allow the game to be None in case it is a playoff game and we don't have explicit information for it.
+    In this case, we just use home advantage.
+    
+    Args:
+        home_elo (float): Elo of home team.
+        away_elo (float): Elo of away team.
+        game (pd.Series): Row of game dataframe containing game info including rest days, travel, etc. If none,
+            this will default the calculation to adjust for home advantage only.
+    
+    """
+    
+    if game is None: # For playoffs we don't have rows in the dataframe
+        elo_diff = away_elo - home_elo
+    
+        home_adv_diff = 0 - 1
+    
+        x = np.array([elo_diff, home_adv_diff])
+        return p(x.T, w[:2]).item()
+    
+    else:
+        game = game.copy()
+        
+        if not (game['homefirstpitchergameofseason'] and game['homefirstpitchergameofseason']):
+            game['homepitcherminusteamrgs'] = 0
+            game['vispitcherminusteamrgs'] = 0
+            
+        return predict_lr(home_elo, away_elo, game)
+
+def evaluate_elo_prob_func(games_df: pd.DataFrame, elo_prob_func=basic_win_prob_for_et, K: float = 3, margin_of_victory_column: str = None, skip_first_n: int=0, years:Set[int]=None) -> Tuple[float, float]:
+    """Evaluates how well the given function to calculate Elo probabilties does on games_df,
+    producing binary cross entropy and accuracy.
+    
+    Args:
+        games_df (pd.DataFrame): Table whose rows are chronologically ordered game box scores,
+                including columns 'hometeam' for the home team, 'visteam' for the away team, and
+                'homewon' which is True if home won and False otherwise. Each game in game_df must take
+                place after the games that have already been logged for the given teams it includes.
+                Must be indexed by a game id column 'gid'.
+        elo_prob_func (function): Function that takes in a home elo, away elo, and game information
+            (i.e. row of box scores dataframe) and produces the probability of the home team winning.
+        K (float): The K factor, controlling how sensitive each Elo update should be.
+        margin_of_victory_column (str): If given, incorporates the margin of victory column into the Elo update, where
+            higher margins result in larger updates. It is included as an additional variable multiplied by K.
+        skip_first_n (int): The first skip_first_n games for each team will not be considered when computing the accuracy or
+            cross entropy metrics, to allow time for the ratings to adjust to performance.
+        years (Set[int]): If specified, gets metrics for the df filtered for the given years.
+    """
+    from elos import EloTracker
+    
+    games_df = games_df.copy()
+    
+    # Add elos - one should do this from the very start so Elos are accurate
+    et = EloTracker(K=K, elo_prob_func=elo_prob_func, margin_of_victory_column=margin_of_victory_column)
+    et.add_history(games_df, add_win_probs_to_df=True)
+    
+    games_df = games_df.dropna(subset=['adjustedhomedistancetraveled', 'adjustedvisdistancetraveled', 'adjustedhomerestdays', 'adjustedvisrestdays', 'homepitcherminusteamrgs', 'vispitcherminusteamrgs'])
+    
+    # Filter out games where the team hasn't played more than skip_first_n
+    games_df = games_df[(games_df['hometeamgamecount'] > skip_first_n) & (games_df['visteamgamecount'] > skip_first_n)]
+    
+    if years is not None:
+        games_df = games_df[games_df['season'].isin(years)]
+
+    #print(games_df['homewon'])
+    #print(games_df['homewinprob'])
+    bce = log_loss(games_df['homewon'], games_df['homewinprob'])
+    accuracy = accuracy_score(games_df['homewon'], round(games_df['homewinprob']))
+    
+    return bce, accuracy
+
+
 def get_player_transition_matrices(season: int, players: Set[str]) -> Dict[str, np.array]:
     """Given a season and player ids, produces a mapping from each player id to their transition matrix.
     
@@ -106,14 +184,14 @@ def get_player_transition_matrices(season: int, players: Set[str]) -> Dict[str, 
     Returns:
         Dict[str, np.array]: Mapping from each player retrosheet ID to their transition matrix.
     """
-    batting = pd.read_csv(f'../../data/batting_clean.csv')
+    batting = load_batting_csv(f'../data/batting_clean.csv')
     batting = batting[batting['season'] == season]
     
     mapping = {}
     
     # Get averages in case a player has no data
     
-    all_plate_apps = sum(batting[col].sum() for col in ['b_ab', 'b_iw', 'b_w' 'b_hbp', 'b_sf', 'b_sh', 'b_xi'])
+    all_plate_apps = sum(batting[col].sum() for col in ['b_ab', 'b_iw', 'b_w', 'b_hbp', 'b_sf', 'b_sh', 'b_xi'])
     
     all_firsts = (batting['b_h'].sum() - sum(batting[col].sum() for col in ['b_d', 'b_t', 'b_hr'])) + sum(batting[col].sum() for col in ['b_iw', 'b_w', 'b_hbp', 'b_xi'])
     
@@ -135,10 +213,10 @@ def get_player_transition_matrices(season: int, players: Set[str]) -> Dict[str, 
     
     all_out_pct = all_outs / all_plate_apps
     
-    for player in players:
-        player_batting = batting[batting['batter'] == player]
+    for player in tqdm(players):
+        player_batting = batting[batting['id'] == player]
         
-        plate_apps = player_batting['b_ab'].sum() + player_batting['b_bb'].sum() + player_batting['b_hbp'].sum() + player_batting['b_sf'].sum() + player_batting['b_sh'].sum() + player_batting['b_xi'].sum()
+        plate_apps = sum(player_batting[col].sum() for col in ['b_ab', 'b_iw', 'b_w', 'b_hbp', 'b_sf', 'b_sh', 'b_xi'])
         
         firsts = (player_batting['b_h'].sum() - sum(player_batting[col].sum() for col in ['b_d', 'b_t', 'b_hr'])) + sum(player_batting[col].sum() for col in ['b_iw', 'b_w', 'b_hbp', 'b_xi'])
     
@@ -160,11 +238,25 @@ def get_player_transition_matrices(season: int, players: Set[str]) -> Dict[str, 
         
         out_pct = outs / plate_apps if plate_apps > 0 else all_out_pct
         
-        T = np.zeros((24, 25)) # Make zeros so we only have to worry about possible transitions
+        T_third = np.zeros((8, 25)) # Make zeros so we only have to worry about possible transitions
+        # We split this into thirds because the calculations for singles, doubles, triples, homers will
+        # be the same whether 0, 1, or 2 outs
         
         terminal_state = 24
+            
+        # Singles, doubles, triples, homers
+        # In each of them, we assume the number of outs won't change
+        for bases in range(8):
+            initial_state = bases # row index
+            
+            for bases_hit, pct in zip(range(1,5), [first_pct, second_pct, third_pct, homer_pct]): # Singles thru homers
+                next_state = int(bin((bases << bases_hit) + 2**(bases_hit-1))[2:].zfill(3)[-3:], 2)
+                T_third[initial_state, next_state] = pct
         
-        # Start with outs - if < 2 outs, transition to same state but with 1 more out
+        # Stack for 0, 1, 2 outs
+        T = np.vstack((T_third, T_third, T_third))
+                
+        # End with outs - if < 2 outs, transition to same state but with 1 more out
         # if 2 outs, transition to terminal state
         
         for outs in range(2): # < 2 outs
@@ -173,41 +265,49 @@ def get_player_transition_matrices(season: int, players: Set[str]) -> Dict[str, 
                 next_state = initial_state + 8
         
                 T[initial_state, next_state] = out_pct
-                
-        for bases in range(8): # 2 outs
-            initial_state = 2 * 8 + bases
-            T[initial_state, terminal_state] = out_pct
-            
-        # Singles, doubles, triples, homers
-        # In each of them, we assume the number of outs won't change
+
+        # 0 and 1 initial outs - go from current state to same state, but with 1 more out
         
-        for outs in range(3):
-            # Home runs always clear bases
-            for bases in range(8):
-                initial_state = outs * 8 + bases # row index
-                next_state = outs * 8 + 0
-                T[initial_state, next_state] = homer_pct
-                
-            # Triples always result in one on third
-            for bases in range(8):
-                initial_state = outs * 8 + bases # row index
-                next_state = outs * 8 + 4
-                T[initial_state, next_state] = third_pct
-                
-            # Doubles advance any runners by two bases
-            # If we treat bases as a 3-bit binary number, we want to slide them left by 2 and add '10' at the end
-            for bases in range(8):
-                initial_state = outs * 8 + bases # row index
-                next_state = outs * 8 + int(bin((bases << 2) + 2)[2:].zfill(3)[-3:], 2)
-                T[initial_state, next_state] = second_pct
-                
-            # Singles advance any runners by one base
-            # If we treat bases as a 3-bit binary number, we want to slide them left by 1 and add '1' at the end
-            for bases in range(8):
-                initial_state = outs * 8 + bases # row index
-                next_state = outs * 8 + int(bin((bases << 1) + 1)[2:].zfill(3)[-3:], 2)
-                T[initial_state, next_state] = first_pct
+        # 0 outs -> 1 out
+        np.fill_diagonal(T[:1*8, 1*8:2*8], out_pct)
+        
+        # 1 out -> 2 outs
+        np.fill_diagonal(T[1*8:2*8, 2*8:3*8], out_pct)
+                        
+        # 2 outs -> 3 outs (1 terminal state no matter the initial state)
+        T[2*8:, terminal_state] = out_pct
                 
         mapping[player] = T
         
     return mapping
+
+def get_runs_for_transition_matrix() -> np.array:
+    """Produces a 24x25 matrix R where entry R[i,j] contains the number of runs produced
+    by transitioning from state i to state j.
+    
+    The states are ordered exactly the same as for the transition matrix, first by outs
+    (0, 1, 2) then by bases occupied (000, 001, 010, 011, 100, 101, 110, 111).
+    
+    Returns:
+        np.array: Matrix of runs for each transition.
+    """
+    R_third = np.zeros((8, 25)) # Transitions will be the same for 0, 1, 2 outs so calculate once and stack 3x later
+    
+    count_runs = lambda x: sum(int(l) for l in x) # Count number of ones in binary string
+    
+    # We can find the runs by going over each initial state and considering singles, doubles, triples, and homers
+    # We look at the overflow on the left side after shifting by different amounts, counting the '1's
+    for bases in range(8):
+        initial_state = bases
+        
+        for bases_hit in range(1,5): # Singles thru homers
+            full = bin((bases << bases_hit) + 2**(bases_hit-1))[2:].zfill(3)
+            next_state = int(full[-3:], 2)
+            overflow = full[:-3]
+            runs = count_runs(overflow)
+            
+            R_third[initial_state, next_state] = runs
+            
+    R = np.vstack((R_third, R_third, R_third))    
+            
+    return R

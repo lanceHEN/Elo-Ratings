@@ -3,13 +3,17 @@ import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
 from typing import Dict, Set, List
+from pathlib import Path
 
 """This module provides miscellaneous utility constants and functions, whether for working with raw data
 or creating visualizations."""
 
 # Mapping from each team ID to their full name, including active years (duplicate full names otherwise)
 
-teams = pd.read_csv('../data/teams.csv')
+root = Path(__file__).parent.parent.parent
+data_dir = root / "data"
+
+teams = pd.read_csv(data_dir / "teams.csv")
 
 # Merge city and nickname into one 'fullname' column
 teams['fullname'] = teams['CITY'] + ' ' + teams['NICKNAME'] + ' (' + teams['FIRST'].astype(str) + ' - ' + teams['LAST'].astype(str) + ')'
@@ -20,13 +24,13 @@ def get_prev_date_midnight(dt: pd.Timestamp) -> pd.Timestamp:
     """For the given timestamp, gets the timestamp for the previous day at midnight."""
     return dt.normalize() + pd.Timedelta(days=-1)
 
-def load_all_games_csv(filename: str, preprocess=False) -> pd.DataFrame:
-    """Prodcuces filename as a Dataframe, doing any
+def load_all_games_csv(filename: str='gameinfo_cleaned.csv', preprocess=False) -> pd.DataFrame:
+    """Prodcuces data/{filename} as a Dataframe, doing any
     necessary operations on it such as getting the correct dtypes and setting
     the index to the game id. If preprocess=True, this will take max 3 rest days,
     cube root of distance traveled, and square root of margin of victory, adding
     'adjusted' before the original column names."""
-    all_games = pd.read_csv(filename)
+    all_games = pd.read_csv(data_dir / filename)
     
     # Initially string, must be made timestamp
     all_games['timestamp'] = pd.to_datetime(all_games['timestamp'])
@@ -45,6 +49,12 @@ def load_all_games_csv(filename: str, preprocess=False) -> pd.DataFrame:
         all_games['adjustedmarginofvictory'] = np.sqrt(all_games['marginofvictory'])
         
     return all_games
+
+def load_batting_csv(filename: str='batting_clean.csv') -> pd.DataFrame:
+    """Produces data_dir / filename as a Dataframe, setting gid to the index."""
+    batting = pd.read_csv(data_dir / filename)
+    batting = batting.set_index('gid')
+    return batting
 
 def get_teams(game_df: pd.DataFrame) -> Set[str]:
     """Returns the set of all teams in game_df"""
@@ -113,12 +123,12 @@ def get_team_lineup_mapping_first_game(season: int, teams: Set[str]) -> Dict[str
         for the first game of the season. Each player is represented by their
         retrosheet ID.
     """
-    team_stats = pd.read_csv(f'../data/teamstats_clean.csv')
-    team_stats_season = team_stats[team_stats['season'] == season]
+    team_stats = pd.read_csv(data_dir / 'teamstats_clean.csv')
+    team_stats = team_stats[team_stats['season'] == season]
     mapping = {}
     
     for team in teams:
-        first_game = team_stats_season[(team_stats_season['team'] == team)].iloc[0]
+        first_game = team_stats[(team_stats['team'] == team)].iloc[0]
         
         lineup = [first_game[f'start_l{i}'] for i in range(1,10)]
         mapping[team] = lineup
