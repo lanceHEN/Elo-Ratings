@@ -82,7 +82,6 @@ Use scripts and notebooks under `src/simulation/` and `src/notebooks/simulation/
 `src/utils/` contains helper modules:
 - `math_utils.py` — mathematical and statistical functions
 - `misc_utils.py` — miscellaneous helper functions
-- `elos_utils.py` — Elo-specific helper functions
 
 `src/elos/elo_tracker.py` provides the EloTracker class for tracking and updating Elo ratings.
 
