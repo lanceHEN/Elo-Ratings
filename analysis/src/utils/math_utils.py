@@ -1,16 +1,26 @@
-from typing import Set, Dict, List, Tuple
+from typing import Set, Dict, List, Tuple, Iterable
+from pathlib import Path
+
 from scipy.special import expit
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from .misc_utils import load_batting_csv, get_teams, get_team_lineup_mapping_first_game
 from sklearn.metrics import log_loss, accuracy_score
+
+from .misc_utils import load_clean_csv, get_teams, get_team_lineup_mapping_first_game
 
 """This module provides mathematical utility constants and functions used throughout the analysis codebase."""
 
 # Learned in src/win_prob.py
-#w = np.array([[1.0], [27.1440666], [4.81476328], [-0.30523283], [1.58004319]])
-w = np.array([[ 1.        ], [27.76849962], [ 5.9476822 ], [-0.31031039], [ 1.59619219]])
+# w = np.array([[1.0], [27.1440666], [4.81476328], [-0.30523283], [1.58004319]])
+w = np.array([[1.0], [27.76849962], [5.9476822], [-0.31031039], [1.59619219]])
+
+root = Path(__file__).parent.parent.parent
+data_dir = root / "data"
+raw_data_dir = data_dir / "raw"
+clean_data_dir = data_dir / "clean"
+batting_name = clean_data_dir / "batting_clean.csv"
+pitching_name = clean_data_dir / "pitching_clean.csv"
 
 
 def basic_win_prob(home_elo: float, away_elo: float) -> float:
@@ -132,8 +142,7 @@ def predict_lr_use_pitchers_if_first_games(
         game = game.copy()
 
         if not (
-            game["homefirstpitchergameofseason"]
-            and game["visfirstpitchergameofseason"]
+            game["homefirstpitchergameofseason"] and game["visfirstpitchergameofseason"]
         ):
             game["homepitcherminusteamrgs"] = 0
             game["vispitcherminusteamrgs"] = 0
@@ -207,10 +216,191 @@ def evaluate_elo_prob_func(
     return bce, accuracy
 
 
-def get_player_transition_matrices(
-    season: int, players: Set[str]
-) -> Dict[str, np.array]:
-    """Given a season and player ids, produces a mapping from each player id to their transition matrix.
+def _get_transition_percents_from_batting_df(batting_df: pd.DataFrame) -> np.array:
+    """
+    Produces numpy array percentages for getting to first, second, third, home, or out from the given dataframe.
+    """
+    plate_apps = sum(
+        batting_df[col].sum()
+        for col in ["b_ab", "b_iw", "b_w", "b_hbp", "b_sf", "b_sh", "b_xi"]
+    )
+
+    firsts = (
+        batting_df["b_h"].sum()
+        - sum(batting_df[col].sum() for col in ["b_d", "b_t", "b_hr"])
+    ) + sum(batting_df[col].sum() for col in ["b_iw", "b_w", "b_hbp", "b_xi"])
+    seconds = batting_df["b_d"].sum()
+    thirds = batting_df["b_t"].sum()
+    homers = batting_df["b_hr"].sum()
+
+    first_pct = firsts / plate_apps
+    second_pct = seconds / plate_apps
+    third_pct = thirds / plate_apps
+    homer_pct = homers / plate_apps
+    out_pct = 1 - (first_pct + second_pct + third_pct + homer_pct)
+
+    return np.array([first_pct, second_pct, third_pct, homer_pct, out_pct])
+
+
+def _get_transition_percents_from_pitching_df(pitching_df: pd.DataFrame) -> np.array:
+    """
+    Produces numpy array of percentages for hitters getting to first, second, third, home, and out from the given pitching dataframe.
+    """
+    plate_apps = pitching_df["p_bfp"].sum()
+
+    firsts = (
+        pitching_df["p_h"].sum()
+        - sum(pitching_df[col].sum() for col in ["p_d", "p_t", "p_hr"])
+    ) + sum(
+        pitching_df[col].sum() for col in ["p_iw", "p_w", "p_hbp"]
+    )  # No catcher interference but close enough
+    seconds = pitching_df["p_d"].sum()
+    thirds = pitching_df["p_t"].sum()
+    homers = pitching_df["p_hr"].sum()
+
+    first_pct = firsts / plate_apps
+    second_pct = seconds / plate_apps
+    third_pct = thirds / plate_apps
+    homer_pct = homers / plate_apps
+    out_pct = 1 - (first_pct + second_pct + third_pct + homer_pct)
+
+    return np.array([first_pct, second_pct, third_pct, homer_pct, out_pct])
+
+
+def _season_transition_percentages(season: int) -> np.array:
+    """Produces numpy array of overall percentages for getting to first, second, third, home,
+    or out for the given season."""
+    batting = load_clean_csv(batting_name)
+    batting = batting[batting["season"] == season]
+
+    return _get_transition_percents_from_batting_df(batting)
+
+
+def _hitter_transition_percentages(
+    season: int, hitter_id: str, global_transition_percentages: np.array
+) -> np.array:
+    """
+    Produces numpy array of percentages for getting to first, second, third, home, or out
+    for the given hitter retrosheet id, in the given season; defaults to the
+    global percentages if the hitter had < 30 plate appearances.
+    """
+    batting = load_clean_csv(batting_name)
+    batting = batting[(batting["season"] == season) & (batting["id"] == hitter_id)]
+
+    if len(batting) < 30:
+        return global_transition_percentages
+    else:
+        return _get_transition_percents_from_batting_df(batting)
+
+
+def _team_pitcher_transition_percentages(season: int, team_id: str) -> np.array:
+    """
+    Produces numpy array of percentages for opponent hitters getting to first, second, third, and home
+    for the given pitching team retrosheet id, in the given season; defaults to the
+    global percentages if the pitcher had < 30 plate appearances.
+    """
+    pitching = load_clean_csv(pitching_name)
+    pitching = pitching[(pitching["season"] == season) & (pitching["team"] == team_id)]
+
+    return _get_transition_percents_from_pitching_df(pitching)
+
+
+def _get_transition_matrix(transition_values: np.array) -> np.array:
+    """
+    Given an array of transition values, produces the corresponding transition matrix.
+
+    Args:
+        transition_values (np.array): Array of transition values for reaching
+            first, second, third, home, or getting out. These may be ratios
+            or percentages
+
+    Returns:
+        np.array: The corresponding transition matrix.
+    """
+
+    first, second, third, home, out = tuple(transition_values)
+
+    T_third = np.zeros((8, 25))
+    # Make zeros so we only have to worry about possible transitions
+    # We split this into thirds because the calculations for singles, doubles, triples, homers will
+    # be the same whether 0, 1, or 2 outs
+
+    terminal_state = 24
+
+    # Singles, doubles, triples, homers
+    # In each of them, we assume the number of outs won't change
+    for bases in range(8):
+        initial_state = bases  # row index
+
+        for bases_hit, val in zip(
+            range(1, 5), [first, second, third, home]
+        ):  # Singles thru homers
+            next_state = int(
+                bin((bases << bases_hit) + 2 ** (bases_hit - 1))[2:].zfill(3)[-3:],
+                2,
+            )
+            T_third[initial_state, next_state] = val
+
+    # Stack for 0, 1, 2 outs
+    T = np.vstack((T_third, T_third, T_third))
+
+    # 0 and 1 initial outs - go from current state to same state, but with 1 more out
+
+    # 0 outs -> 1 out
+    np.fill_diagonal(T[: 1 * 8, 1 * 8 : 2 * 8], out)
+
+    # 1 out -> 2 outs
+    np.fill_diagonal(T[1 * 8 : 2 * 8, 2 * 8 : 3 * 8], out)
+
+    # 2 outs -> 3 outs (1 terminal state no matter the initial state)
+    T[2 * 8 :, terminal_state] = out
+
+    return T
+
+
+def _get_hitter_global_ratio_transition_matrix(
+    season: int, hitter_id: str, global_transition_percentages: np.array
+) -> np.array:
+    """
+    Produces transition matrix using stats for the given hitter in the given season, normalized by
+    global percentages. In other words, each nonzero matrix element is the batter's percentage
+    divided by the global percentage, e.g. for 1 base transitions, the value is the percentage
+    of time the batter hits for 1 base over the global percentage of times that season
+    any batter hits for 1 base.
+
+    Each matrix is 24x25, where each of the initial 24 is some combination of # outs and bases occupied,
+    and there is one additional column for the terminal state of 3 outs.
+
+    They are ordered first by outs (0, 1, 2) then by bases occupied (000, 001, 010, 011, 100, 101, 110, 111).
+    Note bases occupied are represented and ordered as 3-bit binary numbers, for convenience with calculating
+    transitions for singles and doubles.
+
+    Note that in this implementation, we only use the player out, reach first, reach second, reach third, and home run events
+    to have enough data for each state. We also don't have information for advancing runners currently.
+
+    Args:
+        season (int): The season year to get player data for.
+        hitter_id (str): The retrosheet id of the hitter to get stats for.
+        global_transition_percentages np.array: Overall percentages for
+            reaching first, second, third, home, or out. If player has < 30 at bats, the batter
+            percentages will default to these
+
+    Returns:
+        np.array: 24x25 matrix of batter transition percentages divided by global transition
+            percentages.
+    """
+    batter_pcts = _hitter_transition_percentages(
+        season, hitter_id, global_transition_percentages
+    )
+
+    ratios = batter_pcts / global_transition_percentages
+
+    return _get_transition_matrix(ratios)
+
+
+def _get_team_pitching_transition_matrix(season: int, team_id: str) -> np.array:
+    """
+    Produces transition matrix using pitching stats for the given team in the given season.
 
     Each transition matrix is 24x25, where each of the initial 24 is some combination of # outs and bases occupied,
     and there is one additional column for the terminal state of 3 outs.
@@ -224,153 +414,79 @@ def get_player_transition_matrices(
 
     Args:
         season (int): The season year to get player data for.
-        player_names (Set[str]): The set of player retrosheet IDs to get transition matrices for.
+        team_id (str): The retrosheet id of the team to get stats for.
 
     Returns:
-        Dict[str, np.array]: Mapping from each player retrosheet ID to their transition matrix.
+        np.array: 24x25 transition matrix.
     """
-    batting = load_batting_csv()
-    batting = batting[batting["season"] == season]
+    pitching_pcts = _team_pitcher_transition_percentages(season, team_id)
 
-    mapping = {}
+    return _get_transition_matrix(pitching_pcts)
 
-    # Get averages in case a player has no data
 
-    all_plate_apps = sum(
-        batting[col].sum()
-        for col in ["b_ab", "b_iw", "b_w", "b_hbp", "b_sf", "b_sh", "b_xi"]
-    )
-
-    all_firsts = (
-        batting["b_h"].sum() - sum(batting[col].sum() for col in ["b_d", "b_t", "b_hr"])
-    ) + sum(batting[col].sum() for col in ["b_iw", "b_w", "b_hbp", "b_xi"])
-
-    all_seconds = batting["b_d"].sum()
-
-    all_thirds = batting["b_t"].sum()
-
-    all_homers = batting["b_hr"].sum()
-
-    all_outs = all_plate_apps - (
-        all_firsts + all_seconds + all_thirds + all_homers
-    )  # Not correct but close enough
-
-    all_first_pct = all_firsts / all_plate_apps
-
-    all_second_pct = all_seconds / all_plate_apps
-
-    all_third_pct = all_thirds / all_plate_apps
-
-    all_homer_pct = all_homers / all_plate_apps
-
-    all_out_pct = all_outs / all_plate_apps
-
-    for player in tqdm(players):
-        player_batting = batting[batting["id"] == player]
-
-        plate_apps = sum(
-            player_batting[col].sum()
-            for col in ["b_ab", "b_iw", "b_w", "b_hbp", "b_sf", "b_sh", "b_xi"]
-        )
-
-        firsts = (
-            player_batting["b_h"].sum()
-            - sum(player_batting[col].sum() for col in ["b_d", "b_t", "b_hr"])
-        ) + sum(player_batting[col].sum() for col in ["b_iw", "b_w", "b_hbp", "b_xi"])
-
-        seconds = player_batting["b_d"].sum()
-
-        thirds = player_batting["b_t"].sum()
-
-        homers = player_batting["b_hr"].sum()
-
-        outs = plate_apps - (
-            firsts + seconds + thirds + homers
-        )  # Not correct but close enough
-
-        first_pct = firsts / plate_apps if plate_apps > 0 else all_first_pct
-
-        second_pct = seconds / plate_apps if plate_apps > 0 else all_second_pct
-
-        third_pct = thirds / plate_apps if plate_apps > 0 else all_third_pct
-
-        homer_pct = homers / plate_apps if plate_apps > 0 else all_homer_pct
-
-        out_pct = outs / plate_apps if plate_apps > 0 else all_out_pct
-
-        T_third = np.zeros(
-            (8, 25)
-        )  # Make zeros so we only have to worry about possible transitions
-        # We split this into thirds because the calculations for singles, doubles, triples, homers will
-        # be the same whether 0, 1, or 2 outs
-
-        terminal_state = 24
-
-        # Singles, doubles, triples, homers
-        # In each of them, we assume the number of outs won't change
-        for bases in range(8):
-            initial_state = bases  # row index
-
-            for bases_hit, pct in zip(
-                range(1, 5), [first_pct, second_pct, third_pct, homer_pct]
-            ):  # Singles thru homers
-                next_state = int(
-                    bin((bases << bases_hit) + 2 ** (bases_hit - 1))[2:].zfill(3)[-3:],
-                    2,
-                )
-                T_third[initial_state, next_state] = pct
-
-        # Stack for 0, 1, 2 outs
-        T = np.vstack((T_third, T_third, T_third))
-
-        # End with outs - if < 2 outs, transition to same state but with 1 more out
-        # if 2 outs, transition to terminal state
-
-        for outs in range(2):  # < 2 outs
-            for bases in range(8):
-                initial_state = outs * 8 + bases  # row index
-                next_state = initial_state + 8
-
-                T[initial_state, next_state] = out_pct
-
-        # 0 and 1 initial outs - go from current state to same state, but with 1 more out
-
-        # 0 outs -> 1 out
-        np.fill_diagonal(T[: 1 * 8, 1 * 8 : 2 * 8], out_pct)
-
-        # 1 out -> 2 outs
-        np.fill_diagonal(T[1 * 8 : 2 * 8, 2 * 8 : 3 * 8], out_pct)
-
-        # 2 outs -> 3 outs (1 terminal state no matter the initial state)
-        T[2 * 8 :, terminal_state] = out_pct
-
-        mapping[player] = T
-
-    return mapping
-
-def get_team_transition_matrices(
-    season: int
+def get_team_hitter_transition_matrices(
+    season: int, teams: Iterable[str]
 ) -> Dict[str, np.array]:
     """
-    Given a season, produces a mapping from each team to a numpy array of each player's transition matrices.
-    
+    Given a season, produces a mapping from each team to a numpy array of each player's transition matrices,
+    normalized by global percentages, e.g. for 1 base transitions, the value is the percentage
+    of time the batter hits for 1 base over the global percentage of times that season
+    any batter hits for 1 base.
+
     The player transition matrices are from the previous season.
 
     The lineup for each team is simply the lineup for their first game for the season.
 
     Args:
         season (int): The season year to get player/team data for.
-        
+        teams (Iterable[str]): The teams to get data for.
+
     Returns:
         Dict[str, np.array]: Mapping from each team to their lineup transition matrices.
     """
-    team_lineups = get_team_lineup_mapping_first_game(season)
-    pt = get_player_transition_matrices(season-1, set.union(*(set(l) for l in team_lineups.values())))
-    tt = {}
+    default_probs = _season_transition_percentages(season - 1)
+    team_lineups = get_team_lineup_mapping_first_game(season, teams)
+    transition_matrices = {}
     for team, lineup in team_lineups.items():
-        tt[team] = np.array([pt[p] for p in lineup])
-        
-    return tt
+        lineup_matrices = []
+        for player in lineup:
+            lineup_matrices.append(
+                _get_hitter_global_ratio_transition_matrix(
+                    season - 1, player, default_probs
+                )
+            )
+
+        transition_matrices[team] = np.array(lineup_matrices)
+
+    return transition_matrices
+
+
+def get_team_pitcher_transition_matrices(
+    season: int, teams: Iterable[str]
+) -> Dict[str, np.array]:
+    """
+    Given a season, produces a mapping from each team to their overall
+    transition matrix derived from combined pitching for the previous season.
+
+    We do the previous season here for consistency because get_team_hitter_transition_matrices
+    similarly gets data for the previous season.
+
+    Args:
+        season (int): The season year to get team data for.
+        teams (Iterable[str]): The teams to get data for.
+
+    Returns:
+        Dict[str, np.array]: Mapping from each team to their pitcher transition matrix.
+    """
+    transition_matrices = {}
+
+    for team in teams:
+        transition_matrices[team] = _get_team_pitching_transition_matrix(
+            season - 1, team
+        )
+
+    return transition_matrices
+
 
 def get_runs_for_transition_matrix() -> np.array:
     """Produces a 24x25 matrix R where entry R[i,j] contains the number of runs produced
@@ -407,6 +523,7 @@ def get_runs_for_transition_matrix() -> np.array:
 
     return R
 
+
 def get_outs_for_transition_matrix() -> np.array:
     """Produces a 24x25 matrix O where entry O[i,j] contains the number of outs produced
     by transitioning from state i to state j (0 or 1).
@@ -417,15 +534,13 @@ def get_outs_for_transition_matrix() -> np.array:
     Returns:
         np.array: Matrix of outs for each transition.
     """
-    O = np.zeros(
-        (24, 25)
-    ) 
+    O = np.zeros((24, 25))
 
     # For 0 -> 1 or 1 -> 2: Same state but 1 more out, so add 8 to current
     # state idx to get new state idx - this should have a diagonal shape!
-    np.fill_diagonal(O[0:16,8:24], 1)
-    
+    np.fill_diagonal(O[0:16, 8:24], 1)
+
     # For 2->3 outs, just 1 state
-    O[16:,24] = 1
+    O[16:, 24] = 1
 
     return O

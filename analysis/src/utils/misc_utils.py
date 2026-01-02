@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 from matplotlib import pyplot as plt
-from typing import Dict, Set, List
+from typing import Dict, Set, List, Iterable
 from pathlib import Path
 
 """This module provides miscellaneous utility constants and functions, whether for working with raw data
@@ -36,7 +36,12 @@ def get_prev_date_midnight(dt: pd.Timestamp) -> pd.Timestamp:
     """For the given timestamp, gets the timestamp for the previous day at midnight."""
     return dt.normalize() + pd.Timedelta(days=-1)
 
-
+def load_clean_csv(filename: str) -> pd.DataFrame:
+    """Produces clean_data_dir/{filename} as a Dataframe, setting index to gid."""
+    df = pd.read_csv(clean_data_dir / filename)
+    df = df.set_index("gid")
+    return df
+    
 def load_all_games_csv(
     filename: str = "gameinfo_cleaned.csv", preprocess=False
 ) -> pd.DataFrame:
@@ -45,11 +50,10 @@ def load_all_games_csv(
     the index to the game id. If preprocess=True, this will take max 3 rest days,
     cube root of distance traveled, and square root of margin of victory, adding
     'adjusted' before the original column names."""
-    all_games = pd.read_csv(clean_data_dir / filename)
+    all_games = load_clean_csv(filename)
 
     # Initially string, must be made timestamp
     all_games["timestamp"] = pd.to_datetime(all_games["timestamp"])
-    all_games = all_games.set_index("gid")
 
     if preprocess:
         # Max rest days
@@ -73,19 +77,10 @@ def load_all_games_csv(
 
     return all_games
 
-
-def load_batting_csv(filename: str = "batting_clean.csv") -> pd.DataFrame:
-    """Produces clean_data_dir / filename as a Dataframe, setting gid to the index."""
-    batting = pd.read_csv(clean_data_dir / filename)
-    batting = batting.set_index("gid")
-    return batting
-
-
 def get_teams(game_df: pd.DataFrame) -> Set[str]:
     """Returns the set of all teams in game_df"""
     teams = set(game_df["hometeam"].unique()) | set(game_df["visteam"].unique())
     return teams
-
 
 def plot_elo_ratings_over_time(team: str, elos_df: pd.DataFrame) -> None:
     """Plots the Elo ratings from elos_dict for the given team over time.
@@ -140,7 +135,8 @@ def plot_elo_ratings_over_time(team: str, elos_df: pd.DataFrame) -> None:
 
 
 def get_team_lineup_mapping_first_game(
-    season: int
+    season: int,
+    teams: Iterable[str]
 ) -> Dict[str, List[str]]:
     """Given a season, returns a mapping from each team in the season to their starting lineup
     for the first game of the season.
@@ -155,7 +151,6 @@ def get_team_lineup_mapping_first_game(
     """
     team_stats = pd.read_csv(clean_data_dir / "teamstats_clean.csv")
     team_stats = team_stats[team_stats["season"] == season]
-    teams = team_stats["team"].unique()
     mapping = {}
 
     for team in teams:
