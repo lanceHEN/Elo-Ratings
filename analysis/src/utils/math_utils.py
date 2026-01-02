@@ -3,13 +3,14 @@ from scipy.special import expit
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from .misc_utils import load_batting_csv
+from .misc_utils import load_batting_csv, get_teams, get_team_lineup_mapping_first_game
 from sklearn.metrics import log_loss, accuracy_score
 
 """This module provides mathematical utility constants and functions used throughout the analysis codebase."""
 
 # Learned in src/win_prob.py
-w = np.array([[1.0], [27.1440666], [4.81476328], [-0.30523283], [1.58004319]])
+#w = np.array([[1.0], [27.1440666], [4.81476328], [-0.30523283], [1.58004319]])
+w = np.array([[ 1.        ], [27.76849962], [ 5.9476822 ], [-0.31031039], [ 1.59619219]])
 
 
 def basic_win_prob(home_elo: float, away_elo: float) -> float:
@@ -132,7 +133,7 @@ def predict_lr_use_pitchers_if_first_games(
 
         if not (
             game["homefirstpitchergameofseason"]
-            and game["homefirstpitchergameofseason"]
+            and game["visfirstpitchergameofseason"]
         ):
             game["homepitcherminusteamrgs"] = 0
             game["vispitcherminusteamrgs"] = 0
@@ -228,7 +229,7 @@ def get_player_transition_matrices(
     Returns:
         Dict[str, np.array]: Mapping from each player retrosheet ID to their transition matrix.
     """
-    batting = load_batting_csv(f"../data/batting_clean.csv")
+    batting = load_batting_csv()
     batting = batting[batting["season"] == season]
 
     mapping = {}
@@ -347,6 +348,29 @@ def get_player_transition_matrices(
 
     return mapping
 
+def get_team_transition_matrices(
+    season: int
+) -> Dict[str, np.array]:
+    """
+    Given a season, produces a mapping from each team to a numpy array of each player's transition matrices.
+    
+    The player transition matrices are from the previous season.
+
+    The lineup for each team is simply the lineup for their first game for the season.
+
+    Args:
+        season (int): The season year to get player/team data for.
+        
+    Returns:
+        Dict[str, np.array]: Mapping from each team to their lineup transition matrices.
+    """
+    team_lineups = get_team_lineup_mapping_first_game(season)
+    pt = get_player_transition_matrices(season-1, set.union(*(set(l) for l in team_lineups.values())))
+    tt = {}
+    for team, lineup in team_lineups.items():
+        tt[team] = np.array([pt[p] for p in lineup])
+        
+    return tt
 
 def get_runs_for_transition_matrix() -> np.array:
     """Produces a 24x25 matrix R where entry R[i,j] contains the number of runs produced
@@ -382,3 +406,26 @@ def get_runs_for_transition_matrix() -> np.array:
     R = np.vstack((R_third, R_third, R_third))
 
     return R
+
+def get_outs_for_transition_matrix() -> np.array:
+    """Produces a 24x25 matrix O where entry O[i,j] contains the number of outs produced
+    by transitioning from state i to state j (0 or 1).
+
+    The states are ordered exactly the same as for the transition matrix, first by outs
+    (0, 1, 2) then by bases occupied (000, 001, 010, 011, 100, 101, 110, 111).
+
+    Returns:
+        np.array: Matrix of outs for each transition.
+    """
+    O = np.zeros(
+        (24, 25)
+    ) 
+
+    # For 0 -> 1 or 1 -> 2: Same state but 1 more out, so add 8 to current
+    # state idx to get new state idx - this should have a diagonal shape!
+    np.fill_diagonal(O[0:16,8:24], 1)
+    
+    # For 2->3 outs, just 1 state
+    O[16:,24] = 1
+
+    return O

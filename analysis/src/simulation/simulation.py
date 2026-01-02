@@ -3,8 +3,9 @@ import pandas as pd
 from utils import (
     basic_win_prob_for_et,
     elo_update,
-    get_player_transition_matrices,
+    get_team_transition_matrices,
     get_runs_for_transition_matrix,
+    get_outs_for_transition_matrix,
 )
 from typing import Tuple, Dict, List, Set
 import heapq
@@ -12,40 +13,88 @@ import math
 from tqdm import tqdm
 from scipy.stats import uniform, poisson
 
+from .sim_info import SimInfo
+
 """This provides functions useful to simulate an MLB season with the help of Elo ratings."""
 
 
-def uniform_simulation(home_win_prob: float, home_team: str, away_team: str) -> int:
+def uniform_simulation(sim_info: SimInfo) -> int:
     """Simulates a game simply according to the home win probability, returning 1 if home team wins, 0 otherwise.
 
-    This function does not simulate any in-game events. home_team and away_team arguments are unused and
-    given only to match the signature of simulation functions that do vary by the given teams
-
     Args:
-        home_win_prob (float): Probability of home team winning.
-        home_team (str): Name of home team (unused).
-        away_team (str): Name of away team (unused).
+        sim_info: SimInfo object storing game simulation information.
 
     Returns:
         int: 1 if home team wins, 0 otherwise.
     """
-    return int(uniform.rvs() <= home_win_prob)
+    return int(uniform.rvs() <= sim_info.home_win_prob)
 
 
-def pa_simulation(home_win_prob: float, home_team: str, away_team: str) -> int:
+def pa_simulation(sim_info: SimInfo) -> int:
     """Simulates the game including each plate appearance, returning 1 if home team wins, 0 otherwise.
 
-    It will leverage home_win_prob as an initial win probability, which will change over time through
-    each PA.
 
     Args:
-        home_win_prob (float): Probability of home team winning.
-        home_team (str): Name of home team (unused).
-        away_team (str): Name of away team (unused).
+        sim_info: SimInfo object storing game simulation information.
 
     Returns:
         int: 1 if home team wins, 0 otherwise.
     """
+
+    inning = 1
+    outs = 0
+    home_runs = 0
+    away_runs = 0
+    home_player_idx = 0
+    away_player_idx = 0
+    cur_transition_state = 0  # initial: 0 out, 0 on base
+
+    away_batting = True
+    # we don't need to actually know the teams if we have
+    # transition matrices.
+
+    while inning <= 9 or (
+        inning >= 10 and (home_runs == away_runs or (not away_batting))
+    ):
+        if away_batting:
+            player_idx = away_player_idx
+            transition_matrices = sim_info.away_transition_matrices
+        else:
+            player_idx = home_player_idx
+            transition_matrices = sim_info.home_transition_matrices
+
+        # Sample from transition matrix to update state
+        T = transition_matrices[player_idx]
+        probs = T[cur_transition_state]
+        prev_transition_state = cur_transition_state
+        cur_transition_state = np.random.choice(len(probs), p=probs)
+
+        # Increment runs
+        add_runs = sim_info.run_matrix[prev_transition_state][cur_transition_state]
+        if away_batting:
+            away_runs += add_runs
+        else:
+            home_runs += add_runs
+
+        # Was it an out?
+        outs += sim_info.out_matrix[prev_transition_state][cur_transition_state]
+
+        # Go to new state - either same team or different team if 3 outs
+        if outs == 3:
+            outs = 0
+            cur_transition_state = 0
+            if not away_batting: # Did home inning just end? Go to next inning
+                inning += 1
+            away_batting = not away_batting
+        else:
+            if away_batting:
+                away_player_idx = (away_player_idx + 1) % 9
+            else:
+                home_player_idx = (home_player_idx + 1) % 9
+                
+    #print(f"Home: {home_runs}; Away: {away_runs}")
+
+    return int(home_runs > away_runs)
 
 
 class MLBSimulator:
@@ -74,6 +123,7 @@ class MLBSimulator:
         schedule: pd.DataFrame,
         american_league: Set[str],
         national_league: Set[str],
+        season: int,
         initial_elos: Dict[str, float],
         simulation_func=uniform_simulation,
         K: float = 3,
@@ -86,6 +136,7 @@ class MLBSimulator:
         schedule (pd.DataFrame): Chronologically ordered DataFrame of matchups.
         american_league (Set[str]): American league teams.
         national_league (Set[str]): National league teams.
+        season (int): The season the simulation takes place in.
         initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating.
         simulation_func (function): Function that takes in the initial home win probability and team names, and
             simulates the game result, returning 1 if home team wins, 0 otherwise.
@@ -105,12 +156,12 @@ class MLBSimulator:
         self.simulate_mov = simulate_mov
         self.simulation_results = None
 
-        if simulation_func == pa_simulation:
-            season_players = set()
-            self.player_transition_matrices = get_player_transition_matrices(
-                season_players
-            )
-            self.R = get_runs_for_transition_matrix()
+        # Create mapping from each team to player transition matrices once,
+        # so during simulation we can easily get transition matrices for the
+        # appropriate teams.
+        self.team_to_transition_matrices = get_team_transition_matrices(season)
+        self.run_matrix = get_runs_for_transition_matrix()
+        self.out_matrix = get_outs_for_transition_matrix()
 
     def _simulate_game(
         self,
@@ -130,8 +181,20 @@ class MLBSimulator:
         """
         home_win_prob = self.elo_prob_func(home_elo, away_elo, game_info)
 
+        home_transition_matrices = self.team_to_transition_matrices[home_team]
+        away_transition_matrices = self.team_to_transition_matrices[away_team]
+
+        # Produce SimInfo object for simulation
+        si = SimInfo(
+            home_win_prob,
+            home_transition_matrices,
+            away_transition_matrices,
+            self.run_matrix,
+            self.out_matrix,
+        )
+
         # Simulate result
-        home_won = self.simulation_func(home_win_prob, home_team, away_team)
+        home_won = self.simulation_func(si)
 
         sqrt_mov = None
         if self.simulate_mov:

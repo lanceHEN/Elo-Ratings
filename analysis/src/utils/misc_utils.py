@@ -12,8 +12,10 @@ or creating visualizations."""
 
 root = Path(__file__).parent.parent.parent
 data_dir = root / "data"
+raw_data_dir = data_dir / "raw"
+clean_data_dir = data_dir / "clean"
 
-teams = pd.read_csv(data_dir / "teams.csv")
+teams = pd.read_csv(raw_data_dir / "teams.csv")
 
 # Merge city and nickname into one 'fullname' column
 teams["fullname"] = (
@@ -38,12 +40,12 @@ def get_prev_date_midnight(dt: pd.Timestamp) -> pd.Timestamp:
 def load_all_games_csv(
     filename: str = "gameinfo_cleaned.csv", preprocess=False
 ) -> pd.DataFrame:
-    """Prodcuces data/{filename} as a Dataframe, doing any
+    """Prodcuces clean_data_dir/{filename} as a Dataframe, doing any
     necessary operations on it such as getting the correct dtypes and setting
     the index to the game id. If preprocess=True, this will take max 3 rest days,
     cube root of distance traveled, and square root of margin of victory, adding
     'adjusted' before the original column names."""
-    all_games = pd.read_csv(data_dir / filename)
+    all_games = pd.read_csv(clean_data_dir / filename)
 
     # Initially string, must be made timestamp
     all_games["timestamp"] = pd.to_datetime(all_games["timestamp"])
@@ -73,8 +75,8 @@ def load_all_games_csv(
 
 
 def load_batting_csv(filename: str = "batting_clean.csv") -> pd.DataFrame:
-    """Produces data_dir / filename as a Dataframe, setting gid to the index."""
-    batting = pd.read_csv(data_dir / filename)
+    """Produces clean_data_dir / filename as a Dataframe, setting gid to the index."""
+    batting = pd.read_csv(clean_data_dir / filename)
     batting = batting.set_index("gid")
     return batting
 
@@ -138,22 +140,22 @@ def plot_elo_ratings_over_time(team: str, elos_df: pd.DataFrame) -> None:
 
 
 def get_team_lineup_mapping_first_game(
-    season: int, teams: Set[str]
+    season: int
 ) -> Dict[str, List[str]]:
-    """Given a season, returns a mapping from each team in teams to their starting lineup
+    """Given a season, returns a mapping from each team in the season to their starting lineup
     for the first game of the season.
 
     Args:
         season (int): The season year.
-        teams (Set[str]): The set of teams to get lineups for.
 
     Returns:
         Dict[str, List[str]]: Mapping from each team to their starting lineup
         for the first game of the season. Each player is represented by their
         retrosheet ID.
     """
-    team_stats = pd.read_csv(data_dir / "teamstats_clean.csv")
+    team_stats = pd.read_csv(clean_data_dir / "teamstats_clean.csv")
     team_stats = team_stats[team_stats["season"] == season]
+    teams = team_stats["team"].unique()
     mapping = {}
 
     for team in teams:
