@@ -10,12 +10,12 @@ or creating visualizations."""
 
 # Mapping from each team ID to their full name, including active years (duplicate full names otherwise)
 
-root = Path(__file__).parent.parent.parent
-data_dir = root / "data"
-raw_data_dir = data_dir / "raw"
-clean_data_dir = data_dir / "clean"
+ROOT = Path(__file__).parent.parent.parent
+DATA_DIR = ROOT / "data"
+RAW_DATA_DIR = DATA_DIR / "raw"
+CLEAN_DATA_DIR = DATA_DIR / "clean"
 
-teams = pd.read_csv(raw_data_dir / "teams.csv")
+teams = pd.read_csv(RAW_DATA_DIR / "teams.csv")
 
 # Merge city and nickname into one 'fullname' column
 teams["fullname"] = (
@@ -37,15 +37,15 @@ def get_prev_date_midnight(dt: pd.Timestamp) -> pd.Timestamp:
     return dt.normalize() + pd.Timedelta(days=-1)
 
 def load_clean_csv(filename: str) -> pd.DataFrame:
-    """Produces clean_data_dir/{filename} as a Dataframe, setting index to gid."""
-    df = pd.read_csv(clean_data_dir / filename)
+    """Produces CLEAN_DATA_DIR/{filename} as a Dataframe, setting index to gid."""
+    df = pd.read_csv(CLEAN_DATA_DIR / filename)
     df = df.set_index("gid")
     return df
     
 def load_all_games_csv(
     filename: str = "gameinfo_cleaned.csv", preprocess=False
 ) -> pd.DataFrame:
-    """Prodcuces clean_data_dir/{filename} as a Dataframe, doing any
+    """Prodcuces CLEAN_DATA_DIR/{filename} as a Dataframe, doing any
     necessary operations on it such as getting the correct dtypes and setting
     the index to the game id. If preprocess=True, this will take max 3 rest days,
     cube root of distance traveled, and square root of margin of victory, adding
@@ -64,7 +64,7 @@ def load_all_games_csv(
             lambda x: min(3, x)
         )
 
-        # Take cube root of distance traveled
+        # Take cube ROOT of distance traveled
         all_games["adjustedhomedistancetraveled"] = all_games[
             "homedistancetraveled"
         ] ** (1 / 3)
@@ -72,7 +72,7 @@ def load_all_games_csv(
             1 / 3
         )
 
-        # Take square root of margin of victory
+        # Take square ROOT of margin of victory
         all_games["adjustedmarginofvictory"] = np.sqrt(all_games["marginofvictory"])
 
     return all_games
@@ -149,7 +149,7 @@ def get_team_lineup_mapping_first_game(
         for the first game of the season. Each player is represented by their
         retrosheet ID.
     """
-    team_stats = pd.read_csv(clean_data_dir / "teamstats_clean.csv")
+    team_stats = load_clean_csv("teamstats_clean.csv")
     team_stats = team_stats[team_stats["season"] == season]
     mapping = {}
 

@@ -9,8 +9,8 @@ from .math_utils import (
     evaluate_elo_prob_func,
     get_team_hitter_transition_matrices,
     get_team_pitcher_transition_matrices,
-    get_runs_for_transition_matrix,
-    get_outs_for_transition_matrix
+    RUN_MATRIX,
+    OUT_MATRIX
 )
 from .misc_utils import (
     TEAM_FULLNAME_MAP,
@@ -33,7 +33,8 @@ __all__ = [
     "evaluate_elo_prob_func",
     "get_team_hitter_transition_matrices",
     "get_team_pitcher_transition_matrices",
-    "get_runs_for_transition_matrix",
+    "RUN_MATRIX",
+    "OUT_MATRIX",
     "TEAM_FULLNAME_MAP",
     "get_prev_date_midnight",
     "load_all_games_csv",
