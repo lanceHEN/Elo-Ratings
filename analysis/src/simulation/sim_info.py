@@ -1,7 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
-
 
 @dataclass
 class SimInfo:
@@ -11,5 +10,3 @@ class SimInfo:
     home_win_prob: float
     home_transition_matrices: np.ndarray
     away_transition_matrices: np.ndarray
-    run_matrix: np.ndarray
-    out_matrix: np.ndarray

@@ -1,3 +1,3 @@
-from .simulation import MLBSimulator, uniform_simulation, pa_simulation
+from .simulation import MLBSimulator, bernoulli_simulation, pa_simulation
 
-__all__ = ["MLBSimulator", "uniform_simulation", "pa_simulation"]
+__all__ = ["MLBSimulator", "bernoulli_simulation", "pa_simulation"]
