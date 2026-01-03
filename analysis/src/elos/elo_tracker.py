@@ -176,6 +176,10 @@ class EloTracker:
 
         if add_win_probs_to_df:
             game_df["homewinprob"] = home_win_probs
+            
+    @property
+    def elos_map(self):
+        return self.elos_map
 
     def plot_elos_distribution(self, teams: Set[str]) -> Tuple[float, float]:
         """Plots the distribution of the latest elos for the given teams, returning the mean and standard deviation.
