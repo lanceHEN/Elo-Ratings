@@ -6,118 +6,38 @@ from utils import (
     get_team_hitter_transition_matrices,
     get_team_pitcher_transition_matrices,
     RUN_MATRIX,
-    OUT_MATRIX
+    OUT_MATRIX,
 )
 from typing import Tuple, Dict, List, Set
 import heapq
 import math
 from tqdm import tqdm
 from scipy.stats import bernoulli, poisson
+from abc import ABC, abstractmethod
 
-from .sim_info import SimInfo
+"""This provides a variety of implementations of MLB season simulations with the help of Elo ratings.
 
-"""This provides functions useful to simulate an MLB season with the help of Elo ratings."""
+SimpleMLBSimulator simulates games simply according to the given probabilities,
+while PAMLBSimulator simulates every single plate appearance. AbstractMLBSimulator
+serves to de-duplicate code between each implementation.
+"""
 
 
-def bernoulli_simulation(sim_info: SimInfo) -> int:
-    """Simulates a game simply according to the home win probability, returning 1 if home team wins, 0 otherwise.
-
-    Args:
-        sim_info: SimInfo object storing game simulation information.
-
-    Returns:
-        int: 1 if home team wins, 0 otherwise.
+class AbstractMLBSimulator(ABC):
     """
-    return bernoulli.rvs(p=sim_info.home_win_prob)
-
-
-def pa_simulation(sim_info: SimInfo) -> int:
-    """Simulates the game including each plate appearance, returning 1 if home team wins, 0 otherwise.
-
-    Because of the granularity of simulation, this takes significantly longer than
-    the Bernoulli function.
-
-    Args:
-        sim_info: SimInfo object storing game simulation information.
-
-    Returns:
-        int: 1 if home team wins, 0 otherwise.
-    """
-
-    inning = 1
-    outs = 0
-    home_runs = 0
-    away_runs = 0
-    home_player_idx = 0
-    away_player_idx = 0
-    cur_transition_state = 0  # initial: 0 out, 0 on base
-
-    away_batting = True
-    # we don't need to actually know the teams if we have
-    # transition matrices.
-
-    while inning <= 9 or (
-        inning >= 10 and (home_runs == away_runs or (not away_batting))
-    ):
-        if away_batting:
-            player_idx = away_player_idx
-            transition_matrices = sim_info.away_transition_matrices
-        else:
-            player_idx = home_player_idx
-            transition_matrices = sim_info.home_transition_matrices
-
-        # Sample from transition matrix to update state
-        T = transition_matrices[player_idx]
-        # print(T)
-        probs = T[cur_transition_state]
-        prev_transition_state = cur_transition_state
-        # print(probs)
-        cur_transition_state = np.random.choice(len(probs), p=probs)
-
-        # Increment runs
-        add_runs = RUN_MATRIX[prev_transition_state][cur_transition_state]
-        if away_batting:
-            away_runs += add_runs
-        else:
-            home_runs += add_runs
-
-        # Was it an out?
-        outs += OUT_MATRIX[prev_transition_state][cur_transition_state]
-
-        # Go to new state - either same team or different team if 3 outs
-        if outs == 3:
-            outs = 0
-            cur_transition_state = 0
-            if not away_batting:  # Did home inning just end? Go to next inning
-                inning += 1
-            away_batting = not away_batting
-        else:
-            if away_batting:
-                away_player_idx = (away_player_idx + 1) % 9
-            else:
-                home_player_idx = (home_player_idx + 1) % 9
-
-    # print(f"Home: {home_runs}; Away: {away_runs}")
-
-    return int(home_runs > away_runs)
-
-
-class MLBSimulator:
-    """The MLBSimulator class, given initial Elos, enables simulation of a given schedule DataFrame, allowing
-    one to see how often each team makes each round of the playoffs and wins the WS.
+    An abstract class to provide a central source of de-duplicated code that
+    a variety of simulation methods may implement.
 
     Attributes:
         schedule (pd.DataFrame): Chronologically ordered DataFrame of matchups.
         american_league (Set[str]): American league teams.
         national_league (Set[str]): National league teams.
         initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating.
-        simulation_func (function): Function that takes in the initial home win probability and team names, and
-            simulates the game result, returning 1 if home team wins, 0 otherwise.
         K: The K factor, determining how large the update should be.
         elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
             and produces the probability of the home team winning.
         simulate_mov (bool): Whether to simulate the margin of victory.
-        team_results (Dict[str, np.array]): A mapping from each team to a numpy array containing (1) team average wins
+        simulation_results (Dict[str, np.array]): A mapping from each team to a numpy array containing (1) team average wins
             and percentages for how often they (2) make the playoffs, (3) make the divisional, (4) make the league championship,
             (5) make the WS, and (6) win the WS. This will be None until simulate_seasons is ran, which will update it with
             the results of the simulation.
@@ -128,23 +48,18 @@ class MLBSimulator:
         schedule: pd.DataFrame,
         american_league: Set[str],
         national_league: Set[str],
-        season: int,
         initial_elos: Dict[str, float],
-        simulation_func=bernoulli_simulation,
         K: float = 3,
         elo_prob_func=basic_win_prob_for_et,
         simulate_mov: bool = False,
     ):
-        """Initializes an MLBSimulator object with the given parameters.
+        """Initializes an AbstractMLBSimulator object with the given parameters.
 
         Args:
         schedule (pd.DataFrame): Chronologically ordered DataFrame of matchups.
         american_league (Set[str]): American league teams.
         national_league (Set[str]): National league teams.
-        season (int): The season the simulation takes place in.
-        initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating.
-        simulation_func (function): Function that takes in the initial home win probability and team names, and
-            simulates the game result, returning 1 if home team wins, 0 otherwise.
+        initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating
         K: The K factor, determining how large the update should be.
         elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
             and produces the probability of the home team winning.
@@ -155,72 +70,19 @@ class MLBSimulator:
         self.national_league = national_league
         self.initial_elos = initial_elos
         self.teams = self.initial_elos.keys()
-        self.simulation_func = simulation_func
         self.K = K
         self.elo_prob_func = elo_prob_func
         self.simulate_mov = simulate_mov
         self.simulation_results = None
 
-        # Create mapping from each team to player transition matrices once,
-        # so during simulation we can easily get transition matrices for the
-        # appropriate teams.
-        # Do the same thing for pitching matrices
-        self.team_to_hitter_transition_matrices = get_team_hitter_transition_matrices(
-            season, self.teams
-        )
-        self.team_to_pitcher_transition_matrices = get_team_pitcher_transition_matrices(
-            season, self.teams
-        )
-
-    def _prep_transition_matrices(
-        self, home_team: str, away_team: str
-    ) -> Tuple[np.array, np.array]:
+    @abstractmethod
+    def _sim_result(self, home_win_prob: float, home_team: str, away_team: str) -> int:
         """
-        Given home and away teams, gets transition matrices for each of shape [9, 24, 25], accounting
-        for each team's individual hitting and overall pitching performances.
+        Simulates result of home team playing away team, returning 1 if home wins and 0 if not.
+
+        The exact simulation method will vary by implementation.
         """
-        # CRITICAL: cannot modify these references or else will modify the original matrices
-        home_hitter_transition_matrices = self.team_to_hitter_transition_matrices[
-            home_team
-        ]  # N, H, W
-        away_hitter_transition_matrices = self.team_to_hitter_transition_matrices[
-            away_team
-        ]  # N, H, W
-
-        home_pitcher_matrix = self.team_to_pitcher_transition_matrices[
-            home_team
-        ]  # H, W
-        away_pitcher_matrix = self.team_to_pitcher_transition_matrices[
-            away_team
-        ]  # H, W
-
-        # print("Before hadamard product",home_transition_matrices[0])
-        # print("Away pitcher matrix", away_pitcher_matrix)
-
-        # Add in pitcher data
-        home_transition_matrices = home_hitter_transition_matrices * away_pitcher_matrix
-        away_transition_matrices = away_hitter_transition_matrices * home_pitcher_matrix
-
-        # print("Before filling 0s",home_transition_matrices[0])
-
-        # Replace 0 with -inf for softmax
-        home_transition_matrices[home_transition_matrices == 0] = -float("inf")
-        away_transition_matrices[away_transition_matrices == 0] = -float("inf")
-
-        # print("After filling 0s", home_transition_matrices[0])
-
-        def row_softmax(A):
-            """For a 3d array A, takes softmax over each row within each 2d array."""
-            expA = np.exp(A)
-            return expA / expA.sum(axis=2, keepdims=True)
-
-        # Normalize probs between 0 and 1 via softmax
-        home_transition_matrices = row_softmax(home_transition_matrices)
-        away_transition_matrices = row_softmax(away_transition_matrices)
-
-        # print("After softmax",home_transition_matrices[0])
-
-        return home_transition_matrices, away_transition_matrices
+        pass
 
     def _simulate_game(
         self,
@@ -240,19 +102,8 @@ class MLBSimulator:
         """
         home_win_prob = self.elo_prob_func(home_elo, away_elo, game_info)
 
-        home_transition_matrices, away_transition_matrices = (
-            self._prep_transition_matrices(home_team, away_team)
-        )
-
-        # Produce SimInfo object for simulation
-        si = SimInfo(
-            home_win_prob,
-            home_transition_matrices,
-            away_transition_matrices
-        )
-
         # Simulate result
-        home_won = self.simulation_func(si)
+        home_won = self._sim_result(home_win_prob, home_team, away_team)
 
         sqrt_mov = None
         if self.simulate_mov:
@@ -614,3 +465,248 @@ class MLBSimulator:
         }
 
         self.team_results = team_results
+
+class SimpleMLBSimulator(AbstractMLBSimulator):
+    """
+    An MLB Simulator that simply simulates games according to the home win
+    probability, ignoring in-game events.
+
+    Attributes:
+        schedule (pd.DataFrame): Chronologically ordered DataFrame of matchups.
+        american_league (Set[str]): American league teams.
+        national_league (Set[str]): National league teams.
+        initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
+            and produces the probability of the home team winning.
+        simulate_mov (bool): Whether to simulate the margin of victory.
+        simulation_results (Dict[str, np.array]): A mapping from each team to a numpy array containing (1) team average wins
+            and percentages for how often they (2) make the playoffs, (3) make the divisional, (4) make the league championship,
+            (5) make the WS, and (6) win the WS. This will be None until simulate_seasons is ran, which will update it with
+            the results of the simulation.
+    """
+
+    def __init__(
+        self,
+        schedule: pd.DataFrame,
+        american_league: Set[str],
+        national_league: Set[str],
+        initial_elos: Dict[str, float],
+        K: float = 3,
+        elo_prob_func=basic_win_prob_for_et,
+        simulate_mov: bool = False,
+    ):
+        """Initializes a SimpleMLBSimulator object with the given parameters.
+
+        Args:
+        schedule (pd.DataFrame): Chronologically ordered DataFrame of matchups.
+        american_league (Set[str]): American league teams.
+        national_league (Set[str]): National league teams.
+        initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
+            and produces the probability of the home team winning.
+        simulate_mov (bool): Whether to simulate the margin of victory.
+        """
+        super().__init__(
+            schedule,
+            american_league,
+            national_league,
+            initial_elos,
+            K,
+            elo_prob_func,
+            simulate_mov,
+        )
+
+    def _sim_result(self, home_win_prob: float, home_team: str, away_team: str) -> int:
+        """
+        Simulates result of home team playing away team, returning 1 if home wins and 0 if not.
+
+        In this implementation, we simply use home_win_prob, ignoring in-game events.
+        """
+        return bernoulli.rvs(p=home_win_prob)
+
+
+class PAMLBSimulator(AbstractMLBSimulator):
+    """
+    An MLB Simulator that simulates every single plate appearance in each game.
+
+    Attributes:
+        schedule (pd.DataFrame): Chronologically ordered DataFrame of matchups.
+        american_league (Set[str]): American league teams.
+        national_league (Set[str]): National league teams.
+        initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
+            and produces the probability of the home team winning.
+        simulate_mov (bool): Whether to simulate the margin of victory.
+        simulation_results (Dict[str, np.array]): A mapping from each team to a numpy array containing (1) team average wins
+            and percentages for how often they (2) make the playoffs, (3) make the divisional, (4) make the league championship,
+            (5) make the WS, and (6) win the WS. This will be None until simulate_seasons is ran, which will update it with
+            the results of the simulation.
+        team_to_hitter_transition_matrices (Dict[str, np.array]): Mapping from each team to a (9, 24, 25) numpy array where
+            the ith 2d matrix represents the ith player in the lineup's transition matrix, normalized by global hitting stats.
+        team_to_pitcher_transition_matrices (Dict[str, np.array]): Mapping from each team to a (24, 25) numpy array,
+            which is a transition matrix based on hitting stats allowed by that team's pitchers.
+    """
+
+    def __init__(
+        self,
+        schedule: pd.DataFrame,
+        american_league: Set[str],
+        national_league: Set[str],
+        initial_elos: Dict[str, float],
+        season: int,
+        K: float = 3,
+        elo_prob_func=basic_win_prob_for_et,
+        simulate_mov: bool = False,
+    ):
+        """Initializes a PAMLBSimulator object with the given parameters.
+
+        Args:
+        schedule (pd.DataFrame): Chronologically ordered DataFrame of matchups.
+        american_league (Set[str]): American league teams.
+        national_league (Set[str]): National league teams.
+        initial_elos (Dict[str, float]): Mapping of each team to initial Elo rating
+        season: Which year the simulated season is in.
+        K: The K factor, determining how large the update should be.
+        elo_prob_func (function): Function that takes in a home elo and away elo and optional game info,
+            and produces the probability of the home team winning.
+        simulate_mov (bool): Whether to simulate the margin of victory.
+        """
+        super().__init__(
+            schedule,
+            american_league,
+            national_league,
+            initial_elos,
+            K,
+            elo_prob_func,
+            simulate_mov,
+        )
+
+        # Create mapping from each team to player transition matrices once,
+        # so during simulation we can easily get transition matrices for the
+        # appropriate teams.
+        self.team_to_hitter_transition_matrices = get_team_hitter_transition_matrices(
+            season, self.teams
+        )
+        # Do the same thing for pitching matrices
+        self.team_to_pitcher_transition_matrices = get_team_pitcher_transition_matrices(
+            season, self.teams
+        )
+        
+    def _prep_transition_matrices(
+        self, home_team: str, away_team: str
+    ) -> Tuple[np.array, np.array]:
+        """
+        Given home and away teams, gets transition matrices for each of shape [9, 24, 25], accounting
+        for each team's individual hitting and overall pitching performances.
+        """
+        # CRITICAL: cannot modify these references or else will modify the original matrices
+        home_hitter_transition_matrices = self.team_to_hitter_transition_matrices[
+            home_team
+        ]  # N, H, W
+        away_hitter_transition_matrices = self.team_to_hitter_transition_matrices[
+            away_team
+        ]  # N, H, W
+
+        home_pitcher_matrix = self.team_to_pitcher_transition_matrices[
+            home_team
+        ]  # H, W
+        away_pitcher_matrix = self.team_to_pitcher_transition_matrices[
+            away_team
+        ]  # H, W
+
+        # print("Before hadamard product",home_hitter_transition_matrices[0])
+        # print("Away pitcher matrix", away_pitcher_matrix)
+
+        # Add in pitcher data
+        home_transition_matrices = home_hitter_transition_matrices * away_pitcher_matrix
+        away_transition_matrices = away_hitter_transition_matrices * home_pitcher_matrix
+
+        # print("Before filling 0s",home_transition_matrices[0])
+
+        # Replace 0 with -inf for softmax
+        home_transition_matrices[home_transition_matrices == 0] = -float("inf")
+        away_transition_matrices[away_transition_matrices == 0] = -float("inf")
+
+        # print("After filling 0s", home_transition_matrices[0])
+
+        def row_softmax(A):
+            """For a 3d array A, takes softmax over each row within each 2d array."""
+            expA = np.exp(A)
+            return expA / expA.sum(axis=2, keepdims=True)
+
+        # Normalize probs between 0 and 1 via softmax
+        home_transition_matrices = row_softmax(home_transition_matrices)
+        away_transition_matrices = row_softmax(away_transition_matrices)
+
+        # print("After softmax",home_transition_matrices[0])
+
+        return home_transition_matrices, away_transition_matrices
+
+    def _sim_result(self, home_win_prob: float, home_team: str, away_team: str) -> int:
+        """
+        Simulates result of home team playing away team, returning 1 if home wins and 0 if not.
+
+        In this implementation, we simulate every single at-bat, using our computed
+        home and away transition matrices.
+        """
+        
+        home_transition_matrices, away_transition_matrices = self._prep_transition_matrices(home_team, away_team)
+        
+        inning = 1
+
+        outs = 0
+        home_runs = 0
+        away_runs = 0
+        home_player_idx = 0
+        away_player_idx = 0
+        cur_transition_state = 0  # initial: 0 out, 0 on base
+
+        away_batting = True
+
+        while inning <= 9 or (
+            inning >= 10 and (home_runs == away_runs or (not away_batting))
+        ):
+            if away_batting:
+                player_idx = away_player_idx
+                transition_matrices = away_transition_matrices
+            else:
+                player_idx = home_player_idx
+                transition_matrices = home_transition_matrices
+
+            # Sample from transition matrix to update state
+            T = transition_matrices[player_idx]
+            # print(T)
+            probs = T[cur_transition_state]
+            prev_transition_state = cur_transition_state
+            # print(probs)
+            cur_transition_state = np.random.choice(len(probs), p=probs)
+
+            # Increment runs
+            add_runs = RUN_MATRIX[prev_transition_state][cur_transition_state]
+            if away_batting:
+                away_runs += add_runs
+            else:
+                home_runs += add_runs
+
+            # Was it an out?
+            outs += OUT_MATRIX[prev_transition_state][cur_transition_state]
+
+            # Go to new state - either same team or different team if 3 outs
+            if outs == 3:
+                outs = 0
+                cur_transition_state = 0
+                if not away_batting:  # Did home inning just end? Go to next inning
+                    inning += 1
+                away_batting = not away_batting
+            else:
+                if away_batting:
+                    away_player_idx = (away_player_idx + 1) % 9
+                else:
+                    home_player_idx = (home_player_idx + 1) % 9
+
+        # print(f"Home: {home_runs}; Away: {away_runs}")
+
+        return int(home_runs > away_runs)
