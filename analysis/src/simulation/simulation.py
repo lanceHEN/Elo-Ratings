@@ -3,8 +3,7 @@ import pandas as pd
 from utils import (
     basic_win_prob_for_et,
     elo_update,
-    get_team_hitter_transition_matrices,
-    get_team_pitcher_transition_matrices,
+    get_team_hitter_pitcher_transition_matrices,
     RUN_MATRIX,
     OUT_MATRIX,
 )
@@ -544,10 +543,8 @@ class PAMLBSimulator(AbstractMLBSimulator):
             and percentages for how often they (2) make the playoffs, (3) make the divisional, (4) make the league championship,
             (5) make the WS, and (6) win the WS. This will be None until simulate_seasons is ran, which will update it with
             the results of the simulation.
-        team_to_hitter_transition_matrices (Dict[str, np.array]): Mapping from each team to a (9, 24, 25) numpy array where
-            the ith 2d matrix represents the ith player in the lineup's transition matrix, normalized by global hitting stats.
-        team_to_pitcher_transition_matrices (Dict[str, np.array]): Mapping from each team to a (24, 25) numpy array,
-            which is a transition matrix based on hitting stats allowed by that team's pitchers.
+        transition_matrices_map (Dict[Tuple[str, str], np.array]): Mapping from every possible (hitting_team, pitching_team)
+            tuple to the corresponding transition matrices. with their combined data.
     """
 
     def __init__(
@@ -584,67 +581,8 @@ class PAMLBSimulator(AbstractMLBSimulator):
             simulate_mov,
         )
 
-        # Create mapping from each team to player transition matrices once,
-        # so during simulation we can easily get transition matrices for the
-        # appropriate teams.
-        self.team_to_hitter_transition_matrices = get_team_hitter_transition_matrices(
-            season, self.teams
-        )
-        # Do the same thing for pitching matrices
-        self.team_to_pitcher_transition_matrices = get_team_pitcher_transition_matrices(
-            season, self.teams
-        )
+        self.transition_matrices_map = get_team_hitter_pitcher_transition_matrices(season, self.teams)
         
-    def _prep_transition_matrices(
-        self, home_team: str, away_team: str
-    ) -> Tuple[np.array, np.array]:
-        """
-        Given home and away teams, gets transition matrices for each of shape [9, 24, 25], accounting
-        for each team's individual hitting and overall pitching performances.
-        """
-        # CRITICAL: cannot modify these references or else will modify the original matrices
-        home_hitter_transition_matrices = self.team_to_hitter_transition_matrices[
-            home_team
-        ]  # N, H, W
-        away_hitter_transition_matrices = self.team_to_hitter_transition_matrices[
-            away_team
-        ]  # N, H, W
-
-        home_pitcher_matrix = self.team_to_pitcher_transition_matrices[
-            home_team
-        ]  # H, W
-        away_pitcher_matrix = self.team_to_pitcher_transition_matrices[
-            away_team
-        ]  # H, W
-
-        # print("Before hadamard product",home_hitter_transition_matrices[0])
-        # print("Away pitcher matrix", away_pitcher_matrix)
-
-        # Add in pitcher data
-        home_transition_matrices = home_hitter_transition_matrices * away_pitcher_matrix
-        away_transition_matrices = away_hitter_transition_matrices * home_pitcher_matrix
-
-        # print("Before filling 0s",home_transition_matrices[0])
-
-        # Replace 0 with -inf for softmax
-        home_transition_matrices[home_transition_matrices == 0] = -float("inf")
-        away_transition_matrices[away_transition_matrices == 0] = -float("inf")
-
-        # print("After filling 0s", home_transition_matrices[0])
-
-        def row_softmax(A):
-            """For a 3d array A, takes softmax over each row within each 2d array."""
-            expA = np.exp(A)
-            return expA / expA.sum(axis=2, keepdims=True)
-
-        # Normalize probs between 0 and 1 via softmax
-        home_transition_matrices = row_softmax(home_transition_matrices)
-        away_transition_matrices = row_softmax(away_transition_matrices)
-
-        # print("After softmax",home_transition_matrices[0])
-
-        return home_transition_matrices, away_transition_matrices
-
     def _sim_result(self, home_win_prob: float, home_team: str, away_team: str) -> int:
         """
         Simulates result of home team playing away team, returning 1 if home wins and 0 if not.
@@ -653,7 +591,8 @@ class PAMLBSimulator(AbstractMLBSimulator):
         home and away transition matrices.
         """
         
-        home_transition_matrices, away_transition_matrices = self._prep_transition_matrices(home_team, away_team)
+        home_transition_matrices = self.transition_matrices_map[(home_team, away_team)]
+        away_transition_matrices = self.transition_matrices_map[(away_team, home_team)]
         
         inning = 1
 

@@ -430,7 +430,7 @@ def _get_team_pitching_transition_matrix(
     return _get_transition_matrix(pitching_pcts)
 
 
-def get_team_hitter_transition_matrices(
+def _get_team_hitter_transition_matrices(
     season: int, teams: Iterable[str]
 ) -> Dict[str, np.array]:
     """
@@ -475,7 +475,7 @@ def get_team_hitter_transition_matrices(
     return transition_matrices
 
 
-def get_team_pitcher_transition_matrices(
+def _get_team_pitcher_transition_matrices(
     season: int, teams: Iterable[str]
 ) -> Dict[str, np.array]:
     """
@@ -500,7 +500,7 @@ def get_team_pitcher_transition_matrices(
     pitching = load_clean_csv(PITCHING_NAME)
     pitching = pitching[
         pitching["season"] == season - 1
-    ]  # Hitting stats from prev season
+    ]  # Pitching stats from prev season - note if a team just rebranded this won't retrieve that
 
     for team in teams:
         transition_matrices[team] = _get_team_pitching_transition_matrix(pitching, team)
@@ -508,6 +508,39 @@ def get_team_pitcher_transition_matrices(
 
     return transition_matrices
 
+def get_team_hitter_pitcher_transition_matrices(
+    season: int, teams: Iterable[str]
+) -> Dict[Tuple[str, str], np.array]:
+    """
+    Given the season and teams, produces a mapping from every possible (hitting_team, pitching_team)
+    tuple to the corresponding transition matrix.
+    
+    In the process, normalizes probabilities to be between 0 and 1 via softmax.
+    """
+    hitting_matrices = _get_team_hitter_transition_matrices(season, teams)
+    pitching_matrices = _get_team_pitcher_transition_matrices(season, teams)
+    #print(hitting_matrices)
+    mapping = {}
+    
+    for h_team in hitting_matrices:
+        for p_team in pitching_matrices:
+            if h_team == p_team:
+                continue
+
+            hitting = hitting_matrices[h_team]
+            pitching = pitching_matrices[p_team]
+            
+            transition_matrices = hitting * pitching
+            
+            # Replace 0 with -inf for softmax
+            transition_matrices[transition_matrices == 0] = -float("inf")
+            
+            exp_t = np.exp(transition_matrices)
+            transition_matrices = exp_t / exp_t.sum(axis=2, keepdims=True)
+            
+            mapping[(h_team, p_team)] = transition_matrices
+            
+    return mapping
 
 def _get_runs_for_transition_matrix() -> np.array:
     """Produces a 24x25 matrix R where entry R[i,j] contains the number of runs produced
