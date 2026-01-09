@@ -31,6 +31,9 @@ teams["fullname"] = (
 
 TEAM_FULLNAME_MAP = {team: full for team, full in zip(teams["TEAM"], teams["fullname"])}
 
+# By default, rename certain teams
+TEAM_RENAME_MAP = {'ATH':'OAK'}
+
 
 def get_prev_date_midnight(dt: pd.Timestamp) -> pd.Timestamp:
     """For the given timestamp, gets the timestamp for the previous day at midnight."""
